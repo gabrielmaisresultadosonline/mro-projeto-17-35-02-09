@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { getCurrentUser } from '@/lib/userStorage';
 import { Sparkles, Copy, Check, Loader2, RefreshCw, Type } from 'lucide-react';
 
 interface CaptionGeneratorProps {
@@ -39,24 +40,33 @@ export const CaptionGenerator = ({ profileUsername, niche: defaultNiche }: Capti
           niche: niche.trim(),
           product: product.trim(),
           objective: objective.trim() || 'engajamento e vendas',
-          username: profileUsername
+          username: profileUsername,
+          accountUsername: getCurrentUser()?.username || undefined,
         }
       });
 
-      if (error) throw error;
-
-      if (data?.caption) {
-        setGeneratedCaption(data.caption);
-        toast({
-          title: "Legenda gerada!",
-          description: "Sua legenda copy está pronta para uso"
-        });
+      // O backend devolve `error` no corpo quando falta token de IA ou o
+      // provedor recusa. Sem repassar essa mensagem, o usuário só via
+      // "tente novamente" e não sabia que precisava salvar o token no /admin.
+      const backendError = (data as { error?: string } | null)?.error;
+      if (error || backendError) {
+        throw new Error(backendError || error?.message || 'Falha ao gerar legenda');
       }
+
+      if (!data?.caption) {
+        throw new Error('A IA não retornou nenhuma legenda. Verifique o token em /admin → Tokens.');
+      }
+
+      setGeneratedCaption(data.caption);
+      toast({
+        title: "Legenda gerada!",
+        description: "Sua legenda copy está pronta para uso"
+      });
     } catch (error) {
       console.error('Erro ao gerar legenda:', error);
       toast({
         title: "Erro ao gerar legenda",
-        description: "Tente novamente em alguns instantes",
+        description: error instanceof Error ? error.message : "Tente novamente em alguns instantes",
         variant: "destructive"
       });
     } finally {

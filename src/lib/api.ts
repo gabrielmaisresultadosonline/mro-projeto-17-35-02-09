@@ -378,7 +378,8 @@ export const analyzeProfile = async (profile: InstagramProfile): Promise<{
 export const generateStrategy = async (
   profile: InstagramProfile, 
   analysis: ProfileAnalysis, 
-  type: 'mro' | 'content' | 'engagement' | 'sales' | 'bio'
+  type: 'mro' | 'content' | 'engagement' | 'sales' | 'bio',
+  accountUsername?: string
 ): Promise<{
   success: boolean;
   strategy?: Strategy;
@@ -386,7 +387,7 @@ export const generateStrategy = async (
 }> => {
   try {
     const { data, error } = await supabase.functions.invoke('generate-strategy', {
-      body: { profile, analysis, type }
+      body: { profile, analysis, type, accountUsername }
     });
 
     if (error) {

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callTextAi, recordAiGeneration, resolveTextAiKey } from "../_shared/ai-text.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -79,9 +80,9 @@ serve(async (req) => {
   }
 
   try {
-    const { profile, analysis, type, contactId }: StrategyRequest = await req.json();
+    const { profile, analysis, type, contactId, accountUsername }: StrategyRequest & { accountUsername?: string } =
+      await req.json();
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    const DEEPSEEK_API_KEY = Deno.env.get('DEEPSEEK_API_KEY');
 
     // CRM CRM Strategy branch
     if (contactId) {
@@ -375,46 +376,33 @@ RETORNE APENAS JSON VÁLIDO (sem markdown, sem \`\`\`) no formato:
   ]
 }`;
 
-    let strategyResult = null;
+    let strategyResult: Record<string, unknown> | null = null;
+    let usedProvider = 'fallback';
 
-    // DeepSeek only
-    if (DEEPSEEK_API_KEY) {
+    // Chave do /admin (aba Tokens) com fallback para o ambiente.
+    const auth = await resolveTextAiKey();
+    if (auth) {
       try {
-        console.log('Fallback: Gerando com DeepSeek...');
-        const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'deepseek-chat',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: strategyPrompts[type] }
-            ],
-            temperature: 0.8,
-            max_tokens: 6000,
-          }),
+        console.log(`Gerando estratégia via ${auth.provider} (${auth.source})`);
+        const content = await callTextAi({
+          auth,
+          systemPrompt,
+          userPrompt: strategyPrompts[type],
+          maxTokens: 6000,
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          const content = data.choices?.[0]?.message?.content;
-          if (content) {
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              strategyResult = JSON.parse(jsonMatch[0]);
-              console.log('✅ DeepSeek strategy generated successfully');
-            }
-          }
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          strategyResult = JSON.parse(jsonMatch[0]);
+          usedProvider = auth.provider;
+          console.log('✅ Estratégia gerada pela IA com sucesso');
         } else {
-          const errorText = await response.text();
-          console.error('❌ DeepSeek error:', response.status, errorText);
+          console.error('❌ IA não retornou JSON válido; usando fallback');
         }
       } catch (e) {
-        console.error('❌ DeepSeek error:', e);
+        console.error('❌ Erro na IA de texto:', (e as Error).message);
       }
+    } else {
+      console.error('❌ Nenhum token de IA configurado (verifique /admin → Tokens)');
     }
 
     // Fallback básico
@@ -427,8 +415,23 @@ RETORNE APENAS JSON VÁLIDO (sem markdown, sem \`\`\`) no formato:
     strategyResult.type = type;
     strategyResult.createdAt = new Date().toISOString();
 
+    // Normaliza a forma antes de devolver: campos ausentes ou com o tipo
+    // errado quebravam a renderização no dashboard (tela preta).
+    const normalized = normalizeStrategy(strategyResult, type, profile);
+
+    // Persistência durável por conta/perfil, independente do JSON de sessão.
+    await recordAiGeneration({
+      accountUsername: accountUsername ?? null,
+      profileUsername: profile?.username ?? null,
+      kind: 'strategy',
+      type,
+      title: String(normalized.title ?? ''),
+      payload: normalized,
+      provider: usedProvider,
+    });
+
     return new Response(
-      JSON.stringify({ success: true, strategy: strategyResult }),
+      JSON.stringify({ success: true, strategy: normalized }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
@@ -441,6 +444,95 @@ RETORNE APENAS JSON VÁLIDO (sem markdown, sem \`\`\`) no formato:
     );
   }
 });
+
+/**
+ * Garante que a estratégia entregue ao frontend tenha sempre a forma esperada.
+ *
+ * A IA às vezes devolve strings onde o app espera arrays, objetos vazios, ou
+ * itens de calendário sem `hashtags`. Cada um desses casos causava um erro de
+ * render (`.map of undefined`) que derrubava a tela inteira. Normalizando aqui,
+ * o conteúdo continua completo e o dashboard nunca quebra.
+ */
+function normalizeStrategy(raw: Record<string, any>, type: string, profile: any): Record<string, any> {
+  const toArray = (value: unknown): any[] => {
+    if (Array.isArray(value)) return value.filter((item) => item !== null && item !== undefined);
+    if (value === null || value === undefined || value === '') return [];
+    return [value];
+  };
+  const toStringArray = (value: unknown): string[] =>
+    toArray(value).map((item) => (typeof item === 'string' ? item : JSON.stringify(item)));
+
+  const mro = raw.mroTutorial && typeof raw.mroTutorial === 'object' ? raw.mroTutorial : null;
+  const mroTutorial = mro
+    ? {
+        ...mro,
+        dailyActions: toArray(mro.dailyActions).map((action: any) => ({
+          action: String(action?.action ?? action?.name ?? 'Ação'),
+          quantity: String(action?.quantity ?? ''),
+          description: String(action?.description ?? ''),
+        })),
+        unfollowStrategy: toStringArray(mro.unfollowStrategy),
+        competitorReference: String(mro.competitorReference ?? ''),
+        messageTemplates: toStringArray(mro.messageTemplates),
+      }
+    : undefined;
+
+  const hasMroContent =
+    !!mroTutorial &&
+    (mroTutorial.dailyActions.length > 0 ||
+      mroTutorial.unfollowStrategy.length > 0 ||
+      mroTutorial.competitorReference.length > 0 ||
+      mroTutorial.messageTemplates.length > 0);
+
+  return {
+    ...raw,
+    title: String(raw.title ?? `Estratégia para @${profile?.username ?? ''}`),
+    description: String(raw.description ?? ''),
+    type,
+    steps: toStringArray(raw.steps),
+    tips: toStringArray(raw.tips),
+    metaSchedulingTutorial: toStringArray(raw.metaSchedulingTutorial),
+    scripts: toArray(raw.scripts).map((script: any) => ({
+      situation: String(script?.situation ?? 'Situação'),
+      opening: String(script?.opening ?? ''),
+      body: String(script?.body ?? ''),
+      closing: String(script?.closing ?? ''),
+      scarcityTriggers: toStringArray(script?.scarcityTriggers),
+    })),
+    postsCalendar: toArray(raw.postsCalendar).map((post: any) => ({
+      date: String(post?.date ?? ''),
+      dayOfWeek: String(post?.dayOfWeek ?? ''),
+      postType: String(post?.postType ?? ''),
+      content: String(post?.content ?? ''),
+      hashtags: toStringArray(post?.hashtags),
+      bestTime: String(post?.bestTime ?? ''),
+      cta: String(post?.cta ?? ''),
+    })),
+    storiesCalendar: toArray(raw.storiesCalendar).map((day: any) => ({
+      day: String(day?.day ?? ''),
+      stories: toArray(day?.stories).map((story: any) => ({
+        time: String(story?.time ?? ''),
+        type: String(story?.type ?? 'engagement'),
+        content: String(story?.content ?? ''),
+        hasButton: Boolean(story?.hasButton),
+        buttonText: story?.buttonText ? String(story.buttonText) : undefined,
+      })),
+    })),
+    bioAnalysis: raw.bioAnalysis
+      ? {
+          currentBio: String(raw.bioAnalysis.currentBio ?? profile?.bio ?? ''),
+          problems: toStringArray(raw.bioAnalysis.problems),
+          strengths: toStringArray(raw.bioAnalysis.strengths),
+        }
+      : undefined,
+    suggestedBios: toArray(raw.suggestedBios).map((item: any) =>
+      typeof item === 'string'
+        ? { bio: item, focus: '' }
+        : { bio: String(item?.bio ?? ''), focus: String(item?.focus ?? '') },
+    ),
+    mroTutorial: hasMroContent ? mroTutorial : undefined,
+  };
+}
 
 function generateFallbackStrategy(type: string, profile: any, analysis: any) {
   const today = new Date();
@@ -614,7 +706,9 @@ function generateFallbackStrategy(type: string, profile: any, analysis: any) {
         '🔗 Link na bio deve levar para ação',
       ],
       scripts: [],
-      mroTutorial: {},
+      // Não enviar objeto vazio: o dashboard renderiza a seção MRO só quando
+      // existe conteúdo real. `{}` fazia o React quebrar (tela preta).
+      mroTutorial: undefined,
       postsCalendar: [],
       metaSchedulingTutorial: [],
     },
