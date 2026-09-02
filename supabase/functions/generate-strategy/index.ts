@@ -445,6 +445,95 @@ RETORNE APENAS JSON VÁLIDO (sem markdown, sem \`\`\`) no formato:
   }
 });
 
+/**
+ * Garante que a estratégia entregue ao frontend tenha sempre a forma esperada.
+ *
+ * A IA às vezes devolve strings onde o app espera arrays, objetos vazios, ou
+ * itens de calendário sem `hashtags`. Cada um desses casos causava um erro de
+ * render (`.map of undefined`) que derrubava a tela inteira. Normalizando aqui,
+ * o conteúdo continua completo e o dashboard nunca quebra.
+ */
+function normalizeStrategy(raw: Record<string, any>, type: string, profile: any): Record<string, any> {
+  const toArray = (value: unknown): any[] => {
+    if (Array.isArray(value)) return value.filter((item) => item !== null && item !== undefined);
+    if (value === null || value === undefined || value === '') return [];
+    return [value];
+  };
+  const toStringArray = (value: unknown): string[] =>
+    toArray(value).map((item) => (typeof item === 'string' ? item : JSON.stringify(item)));
+
+  const mro = raw.mroTutorial && typeof raw.mroTutorial === 'object' ? raw.mroTutorial : null;
+  const mroTutorial = mro
+    ? {
+        ...mro,
+        dailyActions: toArray(mro.dailyActions).map((action: any) => ({
+          action: String(action?.action ?? action?.name ?? 'Ação'),
+          quantity: String(action?.quantity ?? ''),
+          description: String(action?.description ?? ''),
+        })),
+        unfollowStrategy: toStringArray(mro.unfollowStrategy),
+        competitorReference: String(mro.competitorReference ?? ''),
+        messageTemplates: toStringArray(mro.messageTemplates),
+      }
+    : undefined;
+
+  const hasMroContent =
+    !!mroTutorial &&
+    (mroTutorial.dailyActions.length > 0 ||
+      mroTutorial.unfollowStrategy.length > 0 ||
+      mroTutorial.competitorReference.length > 0 ||
+      mroTutorial.messageTemplates.length > 0);
+
+  return {
+    ...raw,
+    title: String(raw.title ?? `Estratégia para @${profile?.username ?? ''}`),
+    description: String(raw.description ?? ''),
+    type,
+    steps: toStringArray(raw.steps),
+    tips: toStringArray(raw.tips),
+    metaSchedulingTutorial: toStringArray(raw.metaSchedulingTutorial),
+    scripts: toArray(raw.scripts).map((script: any) => ({
+      situation: String(script?.situation ?? 'Situação'),
+      opening: String(script?.opening ?? ''),
+      body: String(script?.body ?? ''),
+      closing: String(script?.closing ?? ''),
+      scarcityTriggers: toStringArray(script?.scarcityTriggers),
+    })),
+    postsCalendar: toArray(raw.postsCalendar).map((post: any) => ({
+      date: String(post?.date ?? ''),
+      dayOfWeek: String(post?.dayOfWeek ?? ''),
+      postType: String(post?.postType ?? ''),
+      content: String(post?.content ?? ''),
+      hashtags: toStringArray(post?.hashtags),
+      bestTime: String(post?.bestTime ?? ''),
+      cta: String(post?.cta ?? ''),
+    })),
+    storiesCalendar: toArray(raw.storiesCalendar).map((day: any) => ({
+      day: String(day?.day ?? ''),
+      stories: toArray(day?.stories).map((story: any) => ({
+        time: String(story?.time ?? ''),
+        type: String(story?.type ?? 'engagement'),
+        content: String(story?.content ?? ''),
+        hasButton: Boolean(story?.hasButton),
+        buttonText: story?.buttonText ? String(story.buttonText) : undefined,
+      })),
+    })),
+    bioAnalysis: raw.bioAnalysis
+      ? {
+          currentBio: String(raw.bioAnalysis.currentBio ?? profile?.bio ?? ''),
+          problems: toStringArray(raw.bioAnalysis.problems),
+          strengths: toStringArray(raw.bioAnalysis.strengths),
+        }
+      : undefined,
+    suggestedBios: toArray(raw.suggestedBios).map((item: any) =>
+      typeof item === 'string'
+        ? { bio: item, focus: '' }
+        : { bio: String(item?.bio ?? ''), focus: String(item?.focus ?? '') },
+    ),
+    mroTutorial: hasMroContent ? mroTutorial : undefined,
+  };
+}
+
 function generateFallbackStrategy(type: string, profile: any, analysis: any) {
   const today = new Date();
   const niche = analysis?.niche || 'seu nicho';
