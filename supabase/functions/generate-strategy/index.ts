@@ -79,9 +79,9 @@ serve(async (req) => {
   }
 
   try {
-    const { profile, analysis, type, contactId }: StrategyRequest = await req.json();
+    const { profile, analysis, type, contactId, accountUsername }: StrategyRequest & { accountUsername?: string } =
+      await req.json();
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    const DEEPSEEK_API_KEY = Deno.env.get('DEEPSEEK_API_KEY');
 
     // CRM CRM Strategy branch
     if (contactId) {
