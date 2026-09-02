@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Strategy, InstagramProfile, ProfileAnalysis, StrategyType } from '@/types/instagram';
 import { Sparkles, Loader2, Zap, MessageSquare, Calendar, Users, User, Clock, AlertCircle, Check } from 'lucide-react';
 import { generateStrategy } from '@/lib/api';
+import { getCurrentUser } from '@/lib/userStorage';
 import { useToast } from '@/hooks/use-toast';
 import { canGenerateStrategy, getStrategyDaysRemaining } from '@/lib/storage';
 
@@ -58,7 +59,7 @@ export const StrategyGenerator = ({ profile, analysis, onStrategyGenerated, exis
     });
 
     try {
-      const result = await generateStrategy(profile, analysis, selectedType);
+      const result = await generateStrategy(profile, analysis, selectedType, getCurrentUser()?.username || undefined);
 
       if (result.success && result.strategy) {
         onStrategyGenerated(result.strategy);
