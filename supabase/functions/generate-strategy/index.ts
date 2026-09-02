@@ -617,7 +617,9 @@ function generateFallbackStrategy(type: string, profile: any, analysis: any) {
         '🔗 Link na bio deve levar para ação',
       ],
       scripts: [],
-      mroTutorial: {},
+      // Não enviar objeto vazio: o dashboard renderiza a seção MRO só quando
+      // existe conteúdo real. `{}` fazia o React quebrar (tela preta).
+      mroTutorial: undefined,
       postsCalendar: [],
       metaSchedulingTutorial: [],
     },
