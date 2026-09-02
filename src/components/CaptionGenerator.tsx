@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { getCurrentUser } from '@/lib/userStorage';
 import { Sparkles, Copy, Check, Loader2, RefreshCw, Type } from 'lucide-react';
 
 interface CaptionGeneratorProps {
