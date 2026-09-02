@@ -375,46 +375,33 @@ RETORNE APENAS JSON VÁLIDO (sem markdown, sem \`\`\`) no formato:
   ]
 }`;
 
-    let strategyResult = null;
+    let strategyResult: Record<string, unknown> | null = null;
+    let usedProvider = 'fallback';
 
-    // DeepSeek only
-    if (DEEPSEEK_API_KEY) {
+    // Chave do /admin (aba Tokens) com fallback para o ambiente.
+    const auth = await resolveTextAiKey();
+    if (auth) {
       try {
-        console.log('Fallback: Gerando com DeepSeek...');
-        const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'deepseek-chat',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: strategyPrompts[type] }
-            ],
-            temperature: 0.8,
-            max_tokens: 6000,
-          }),
+        console.log(`Gerando estratégia via ${auth.provider} (${auth.source})`);
+        const content = await callTextAi({
+          auth,
+          systemPrompt,
+          userPrompt: strategyPrompts[type],
+          maxTokens: 6000,
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          const content = data.choices?.[0]?.message?.content;
-          if (content) {
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              strategyResult = JSON.parse(jsonMatch[0]);
-              console.log('✅ DeepSeek strategy generated successfully');
-            }
-          }
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          strategyResult = JSON.parse(jsonMatch[0]);
+          usedProvider = auth.provider;
+          console.log('✅ Estratégia gerada pela IA com sucesso');
         } else {
-          const errorText = await response.text();
-          console.error('❌ DeepSeek error:', response.status, errorText);
+          console.error('❌ IA não retornou JSON válido; usando fallback');
         }
       } catch (e) {
-        console.error('❌ DeepSeek error:', e);
+        console.error('❌ Erro na IA de texto:', (e as Error).message);
       }
+    } else {
+      console.error('❌ Nenhum token de IA configurado (verifique /admin → Tokens)');
     }
 
     // Fallback básico
@@ -427,8 +414,23 @@ RETORNE APENAS JSON VÁLIDO (sem markdown, sem \`\`\`) no formato:
     strategyResult.type = type;
     strategyResult.createdAt = new Date().toISOString();
 
+    // Normaliza a forma antes de devolver: campos ausentes ou com o tipo
+    // errado quebravam a renderização no dashboard (tela preta).
+    const normalized = normalizeStrategy(strategyResult, type, profile);
+
+    // Persistência durável por conta/perfil, independente do JSON de sessão.
+    await recordAiGeneration({
+      accountUsername: accountUsername ?? null,
+      profileUsername: profile?.username ?? null,
+      kind: 'strategy',
+      type,
+      title: String(normalized.title ?? ''),
+      payload: normalized,
+      provider: usedProvider,
+    });
+
     return new Response(
-      JSON.stringify({ success: true, strategy: strategyResult }),
+      JSON.stringify({ success: true, strategy: normalized }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
