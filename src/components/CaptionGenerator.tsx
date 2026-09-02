@@ -41,7 +41,7 @@ export const CaptionGenerator = ({ profileUsername, niche: defaultNiche }: Capti
           product: product.trim(),
           objective: objective.trim() || 'engajamento e vendas',
           username: profileUsername,
-          accountUsername: getLoggedInUsername() || undefined,
+          accountUsername: getCurrentUser()?.username || undefined,
         }
       });
 
