@@ -1,4 +1,55 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+/**
+ * Normaliza o token: remove espaços, quebras de linha e aspas acidentais.
+ * Um token colado com "\n" ou aspas gera OAuthException 190
+ * ("Cannot parse access token") na Graph API.
+ */
+function sanitizeToken(raw: string | null | undefined): string {
+  return String(raw ?? "")
+    .replace(/\s+/g, "")
+    .replace(/^["']|["']$/g, "")
+    .trim();
+}
+
+/**
+ * Resolve o token do CAPI: tokens salvos no /admin (`api_tokens`) primeiro,
+ * ambiente como fallback.
+ */
+async function resolveMetaToken(): Promise<{ token: string; source: string } | null> {
+  const candidates = [
+    "meta_conversions_api_token",
+    "meta_capi",
+    "meta",
+    "facebook_capi",
+    "facebook",
+  ];
+
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (url && serviceKey) {
+      const db = createClient(url, serviceKey, { auth: { persistSession: false } });
+      const { data } = await db.from("api_tokens").select("key, value").in("key", candidates);
+      if (Array.isArray(data)) {
+        for (const wanted of candidates) {
+          const row = data.find((r: { key: string; value: string }) => r.key === wanted);
+          const token = sanitizeToken(row?.value);
+          if (token) return { token, source: `admin:${wanted}` };
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[META-CONVERSIONS] Falha ao ler api_tokens:", (error as Error).message);
+  }
+
+  const envToken = sanitizeToken(Deno.env.get("META_CONVERSIONS_API_TOKEN"));
+  if (envToken) return { token: envToken, source: "env:META_CONVERSIONS_API_TOKEN" };
+
+  return null;
+}
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -76,15 +127,21 @@ serve(async (req) => {
   }
 
   try {
-    const accessToken = Deno.env.get('META_CONVERSIONS_API_TOKEN');
-    
-    if (!accessToken) {
+    const resolved = await resolveMetaToken();
+
+    if (!resolved) {
+      // Sem token não há como enviar: respondemos 200 com skipped para que o
+      // tracking do site nunca quebre a experiência do usuário.
       console.error('[META-CONVERSIONS] Access token not configured');
       return new Response(
-        JSON.stringify({ success: false, error: 'Access token not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: false, skipped: true, error: 'Access token not configured' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const accessToken = resolved.token;
+    console.log('[META-CONVERSIONS] Token source:', resolved.source);
+
 
     const body: RequestBody = await req.json();
     console.log('[META-CONVERSIONS] Received event:', body.event_name, body.event_id);
@@ -155,7 +212,9 @@ serve(async (req) => {
       console.log('[META-CONVERSIONS] Using test_event_code:', body.test_event_code);
     }
 
-    console.log('[META-CONVERSIONS] Sending to Meta API:', JSON.stringify(metaPayload, null, 2));
+    // Nunca logamos o access_token.
+    console.log('[META-CONVERSIONS] Sending to Meta API:', JSON.stringify({ ...metaPayload, access_token: '***' }));
+
 
     const metaResponse = await fetch(metaUrl, {
       method: 'POST',
@@ -168,12 +227,20 @@ serve(async (req) => {
     const metaResult = await metaResponse.json();
     
     if (!metaResponse.ok) {
-      console.error('[META-CONVERSIONS] Meta API error:', metaResult);
+      // Erros da Graph API (ex.: OAuthException 190 token inválido) são
+      // registrados mas devolvidos com 200 para não derrubar a página.
+      console.error('[META-CONVERSIONS] Meta API error:', JSON.stringify(metaResult));
       return new Response(
-        JSON.stringify({ success: false, error: metaResult }),
-        { status: metaResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({
+          success: false,
+          skipped: true,
+          token_source: resolved.source,
+          error: metaResult,
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
 
     console.log('[META-CONVERSIONS] Meta API response:', metaResult);
 
