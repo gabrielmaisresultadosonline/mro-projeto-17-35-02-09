@@ -15,6 +15,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Este é o único repositório autorizado para atualizar a VPS. Não aceite um
+# REPO_URL herdado do shell/PM2: foi exatamente isso que permitiu um deploy
+# aparentemente bem-sucedido continuar publicando mro-projeto-02.
+CANONICAL_REPO_URL="https://github.com/gabrielmaisresultadosonline/mro-projeto-17-35-02-09.git"
+if [ -n "${REPO_URL:-}" ] && [ "${REPO_URL%/}" != "${CANONICAL_REPO_URL%/}" ]; then
+  echo "ERRO: REPO_URL aponta para um repositório não autorizado: $REPO_URL" >&2
+  echo "Esperado: $CANONICAL_REPO_URL" >&2
+  exit 1
+fi
+REPO_URL="$CANONICAL_REPO_URL"
+
 BLUE='\033[1;36m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; NC='\033[0m'
 step() { echo -e "\n${BLUE}▶ $1${NC}"; }
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
@@ -125,9 +136,6 @@ fi
 ok "Ambiente pronto."
 
 # ---------- 1. Código ----------
-# Repositório oficial deste projeto. Pode ser sobrescrito com REPO_URL=... ./deploy.sh
-REPO_URL="${REPO_URL:-https://github.com/gabrielmaisresultadosonline/mro-projeto-17-35-02-09.git}"
-
 step "Atualizando o código"
 if [ -d .git ]; then
   CURRENT_REMOTE="$(git remote get-url origin 2>/dev/null || echo '')"
@@ -165,8 +173,22 @@ if [ -d .git ]; then
   fi
   echo "   origin: $(git remote get-url origin)"
   echo "   commit: $(git log -1 --pretty='%h %ad %s' --date=short)"
+
+  # Guardas de versão: não basta o fetch terminar. Se estes marcadores não
+  # existirem, a VPS ainda recebeu uma revisão anterior, que encaminha o login
+  # ao processo Deno e volta a produzir HTTP 502 sem CORS.
+  DEPLOYED_REMOTE="$(git remote get-url origin 2>/dev/null || echo '')"
+  [ "$(norm "$DEPLOYED_REMOTE")" = "$(norm "$CANONICAL_REPO_URL")" ] \
+    || fail "Deploy bloqueado: origin efetivo não é o repositório oficial."
+  [ -f server/src/functions/lovablack-admin-native.ts ] \
+    || fail "Deploy bloqueado: o handler nativo de login não existe nesta revisão."
+  grep -q 'handleNativeLovablackAdminLogin' server/src/functions/host.ts \
+    || fail "Deploy bloqueado: esta revisão ainda encaminha admin_login ao Deno."
+  grep -q 'Login administrativo nativo respondeu na porta local' deploy.sh \
+    || fail "Deploy bloqueado: validação real do login administrativo ausente."
+  ok "Repositório e hotfix do login administrativo confirmados antes do build."
 else
-  warn "Não é um repositório git; usando os arquivos presentes no disco."
+  fail "Diretório sem .git: deploy bloqueado porque não é possível confirmar o repositório oficial."
 fi
 
 # Scripts auxiliares só existem depois do sync; por isso o chmod fica aqui e não
@@ -548,8 +570,8 @@ if [ "$CUTOVER" = true ]; then
     && ok "REST respondendo com a chave anônima do site." \
     || warn "REST não respondeu como esperado — confira RLS/ANON_KEY antes de divulgar."
 
-  # O login e várias áreas dependem de Edge Functions. Um /health saudável não
-  # basta: iniciamos uma função real pelo mesmo proxy usado no navegador.
+  # Outras áreas dependem de Edge Functions. Um /health saudável não basta:
+  # iniciamos uma função Deno real pelo mesmo proxy usado no navegador.
   FUNCTION_CHECK_BODY="$(mktemp)"
   FUNCTION_CHECK_STATUS=""
   if FUNCTION_CHECK_STATUS="$(curl -sS --max-time 75 -o "$FUNCTION_CHECK_BODY" -w '%{http_code}' -X POST \
@@ -560,7 +582,7 @@ if [ "$CUTOVER" = true ]; then
       --data '{"action":"verify_user","username":"__deploy_healthcheck__"}' \
       "${API_URL_FINAL%/}/functions/v1/mro-tool-api")" \
       && [[ "$FUNCTION_CHECK_STATUS" =~ ^[234] ]]; then
-    ok "Edge Function de login respondeu integralmente pelo domínio público."
+    ok "Runtime de Edge Functions respondeu integralmente pelo domínio público."
   else
     echo "  Resposta pública (${FUNCTION_CHECK_STATUS:-sem status}):"
     head -c 4000 "$FUNCTION_CHECK_BODY" 2>/dev/null || true; echo
@@ -568,14 +590,14 @@ if [ "$CUTOVER" = true ]; then
     tail -n 100 /var/log/mro/api-out.log 2>/dev/null || true
     tail -n 100 /var/log/mro/api-error.log 2>/dev/null || true
     rm -f "$FUNCTION_CHECK_BODY"
-    fail "Edge Functions indisponíveis; corte bloqueado para evitar falha de login."
+    fail "Edge Functions indisponíveis; corte bloqueado para evitar falhas nas áreas dependentes."
   fi
   rm -f "$FUNCTION_CHECK_BODY"
 
   # Autenticação administrativa: uma chamada real precisa atravessar CDN,
-  # Nginx, Express e iniciar a função Deno. Além do 401 esperado para dados
-  # inválidos, validamos o CORS que o navegador exige. Assim um 502 de cold
-  # start nunca mais passa pelo deploy como simples aviso.
+  # Nginx e o handler Express nativo (sem iniciar Deno). Além do 401 esperado
+  # para dados inválidos, validamos o CORS que o navegador exige. Assim uma
+  # revisão antiga ou um 502 nunca mais passa pelo deploy como sucesso.
   ADMIN_LOGIN_HEADERS="$(mktemp)"
   ADMIN_LOGIN_BODY="$(mktemp)"
   # Primeiro validamos diretamente o Express. Se isto falhar, o diagnóstico é

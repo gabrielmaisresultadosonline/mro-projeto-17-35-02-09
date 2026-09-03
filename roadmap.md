@@ -16,3 +16,4 @@
 - [x] Retirar `admin_login` do cold start Deno e atendê-lo nativamente no backend da VPS
 - [x] Separar no deploy o diagnóstico local do diagnóstico público CDN/Nginx
 - [x] Eliminar referências a runners Deno mortos e exigir PM2 no corte da VPS
+- [x] Bloquear deploy vindo de `mro-projeto-02` e exigir o handler nativo antes do build
