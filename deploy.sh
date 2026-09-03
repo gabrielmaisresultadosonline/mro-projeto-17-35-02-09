@@ -124,7 +124,7 @@ ok "Ambiente pronto."
 
 # ---------- 1. Código ----------
 # Repositório oficial deste projeto. Pode ser sobrescrito com REPO_URL=... ./deploy.sh
-REPO_URL="${REPO_URL:-https://github.com/gabrielmaisresultadosonline/mro-projeto-02.git}"
+REPO_URL="${REPO_URL:-https://github.com/gabrielmaisresultadosonline/mro-projeto-17-35-02-09.git}"
 
 step "Atualizando o código"
 if [ -d .git ]; then

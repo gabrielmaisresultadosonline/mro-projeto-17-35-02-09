@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { Lock, Mail, AlertCircle, ExternalLink, LogOut, Search } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { isAdminLoggedIn, loginAdmin, logoutAdmin } from '@/lib/adminConfig';
 
 const STORAGE_KEY = 'addmin_authenticated';
 
