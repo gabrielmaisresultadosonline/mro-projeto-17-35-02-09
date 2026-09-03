@@ -212,7 +212,9 @@ serve(async (req) => {
       console.log('[META-CONVERSIONS] Using test_event_code:', body.test_event_code);
     }
 
-    console.log('[META-CONVERSIONS] Sending to Meta API:', JSON.stringify(metaPayload, null, 2));
+    // Nunca logamos o access_token.
+    console.log('[META-CONVERSIONS] Sending to Meta API:', JSON.stringify({ ...metaPayload, access_token: '***' }));
+
 
     const metaResponse = await fetch(metaUrl, {
       method: 'POST',
