@@ -875,7 +875,11 @@ export const loginAdmin = async (email: string, password: string): Promise<{ suc
     const { data, error } = await supabase.functions.invoke('lovablack-api', {
       body: { action: 'admin_login', email: normalizedEmail, password },
     });
-    if (error || !data?.success || !data?.token) {
+    if (error) {
+      console.error('Admin login service error:', error);
+      return { success: false, error: 'Servidor de login indisponível. Tente novamente em instantes.' };
+    }
+    if (!data?.success || !data?.token) {
       return { success: false, error: data?.error || 'Credenciais inválidas' };
     }
     localStorage.setItem('mro_admin_session', JSON.stringify({

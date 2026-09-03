@@ -540,19 +540,32 @@ if [ "$CUTOVER" = true ]; then
   fi
   rm -f "$FUNCTION_CHECK_BODY"
 
-  # Autenticação administrativa: confirmamos apenas o CONTRATO das rotas, sem
-  # enviar nem imprimir credenciais reais. Um login inválido precisa ser
-  # recusado e o endpoint de acessos precisa exigir sessão administrativa.
-  ADMIN_LOGIN_STATUS="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' -X POST \
+  # Autenticação administrativa: uma chamada real precisa atravessar CDN,
+  # Nginx, Express e iniciar a função Deno. Além do 401 esperado para dados
+  # inválidos, validamos o CORS que o navegador exige. Assim um 502 de cold
+  # start nunca mais passa pelo deploy como simples aviso.
+  ADMIN_LOGIN_HEADERS="$(mktemp)"
+  ADMIN_LOGIN_BODY="$(mktemp)"
+  ADMIN_LOGIN_STATUS="$(curl -sS --max-time 75 -D "$ADMIN_LOGIN_HEADERS" -o "$ADMIN_LOGIN_BODY" -w '%{http_code}' -X POST \
+    -H "Origin: https://maisresultadosonline.com.br" \
     -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
     -H "Content-Type: application/json" \
     --data '{"action":"admin_login","email":"deploy-check@invalid.local","password":"deploy-check-invalid"}' \
     "${API_URL_FINAL%/}/functions/v1/lovablack-api" || true)"
-  if [ "$ADMIN_LOGIN_STATUS" = "401" ]; then
-    ok "Login administrativo ativo e recusando credenciais inválidas."
+  ADMIN_LOGIN_CORS_COUNT="$(grep -ci '^access-control-allow-origin:' "$ADMIN_LOGIN_HEADERS" || true)"
+  ADMIN_LOGIN_CORS_VALUE="$(grep -i '^access-control-allow-origin:' "$ADMIN_LOGIN_HEADERS" | head -1 | tr -d '\r' | cut -d: -f2- | xargs || true)"
+  if [ "$ADMIN_LOGIN_STATUS" = "401" ] \
+      && [ "$ADMIN_LOGIN_CORS_COUNT" = "1" ] \
+      && [ "$ADMIN_LOGIN_CORS_VALUE" = "https://maisresultadosonline.com.br" ]; then
+    ok "Login administrativo ativo, recusando senha inválida e com CORS válido."
   else
-    warn "Rota de login administrativo respondeu HTTP ${ADMIN_LOGIN_STATUS:-sem status} (esperado 401 para senha inválida)."
+    echo "  Login admin: HTTP ${ADMIN_LOGIN_STATUS:-sem status}; headers CORS: $ADMIN_LOGIN_CORS_COUNT; origem: ${ADMIN_LOGIN_CORS_VALUE:-ausente}"
+    head -c 2000 "$ADMIN_LOGIN_BODY" 2>/dev/null || true; echo
+    tail -n 100 /var/log/mro/api-error.log 2>/dev/null || true
+    rm -f "$ADMIN_LOGIN_HEADERS" "$ADMIN_LOGIN_BODY"
+    fail "Login administrativo indisponível ou sem CORS; deploy bloqueado."
   fi
+  rm -f "$ADMIN_LOGIN_HEADERS" "$ADMIN_LOGIN_BODY"
 
   ACCESS_GUARD_STATUS="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' -X POST \
     -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
