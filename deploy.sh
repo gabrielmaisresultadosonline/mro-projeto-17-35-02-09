@@ -490,6 +490,25 @@ if [ "$CUTOVER" = true ]; then
   fi
   rm -f "$STORAGE_CORS_HEADERS"
 
+  # As extensões (MRO Ferramenta e ZAP MRO) leem user-data/admin/*.json de
+  # origens externas. Essa leitura pública precisa responder com wildcard.
+  PUBLIC_JSON_HEADERS="$(mktemp)"
+  PUBLIC_JSON_STATUS="$(curl -sS --max-time 10 -X OPTIONS \
+      -H "Origin: chrome-extension://mroferramenta" \
+      -H "Access-Control-Request-Method: GET" \
+      -D "$PUBLIC_JSON_HEADERS" -o /dev/null -w '%{http_code}' \
+      "${API_URL_FINAL%/}/storage/v1/object/public/user-data/admin/extension-announcements.json" || true)"
+  PUBLIC_JSON_VALUE="$(grep -i '^access-control-allow-origin:' "$PUBLIC_JSON_HEADERS" | head -1 | tr -d '\r' | cut -d: -f2- | xargs || true)"
+  if [ "$PUBLIC_JSON_STATUS" = "204" ] && [ "$PUBLIC_JSON_VALUE" = "*" ]; then
+    ok "CORS público (wildcard) validado em user-data/admin/*.json."
+  else
+    echo "  OPTIONS público: HTTP ${PUBLIC_JSON_STATUS:-sem status}; origem: ${PUBLIC_JSON_VALUE:-ausente}"
+    cat "$PUBLIC_JSON_HEADERS" 2>/dev/null || true
+    warn "Leitura pública de user-data/admin/*.json sem wildcard — extensões externas podem falhar por CORS."
+  fi
+  rm -f "$PUBLIC_JSON_HEADERS"
+
+
   # Confere de fato pela porta pública se a API responde com a chave anônima:
   # é isso que o navegador vai fazer em cada página.
   curl -sf --max-time 5 -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
