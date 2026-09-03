@@ -1,4 +1,55 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+/**
+ * Normaliza o token: remove espaços, quebras de linha e aspas acidentais.
+ * Um token colado com "\n" ou aspas gera OAuthException 190
+ * ("Cannot parse access token") na Graph API.
+ */
+function sanitizeToken(raw: string | null | undefined): string {
+  return String(raw ?? "")
+    .replace(/\s+/g, "")
+    .replace(/^["']|["']$/g, "")
+    .trim();
+}
+
+/**
+ * Resolve o token do CAPI: tokens salvos no /admin (`api_tokens`) primeiro,
+ * ambiente como fallback.
+ */
+async function resolveMetaToken(): Promise<{ token: string; source: string } | null> {
+  const candidates = [
+    "meta_conversions_api_token",
+    "meta_capi",
+    "meta",
+    "facebook_capi",
+    "facebook",
+  ];
+
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (url && serviceKey) {
+      const db = createClient(url, serviceKey, { auth: { persistSession: false } });
+      const { data } = await db.from("api_tokens").select("key, value").in("key", candidates);
+      if (Array.isArray(data)) {
+        for (const wanted of candidates) {
+          const row = data.find((r: { key: string; value: string }) => r.key === wanted);
+          const token = sanitizeToken(row?.value);
+          if (token) return { token, source: `admin:${wanted}` };
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[META-CONVERSIONS] Falha ao ler api_tokens:", (error as Error).message);
+  }
+
+  const envToken = sanitizeToken(Deno.env.get("META_CONVERSIONS_API_TOKEN"));
+  if (envToken) return { token: envToken, source: "env:META_CONVERSIONS_API_TOKEN" };
+
+  return null;
+}
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
