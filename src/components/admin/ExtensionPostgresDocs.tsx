@@ -233,6 +233,96 @@ async function api(body) {
     [endpoint, meta.legacy, anonKey],
   );
 
+  // ⚠️ Avisos: leitura direta do Storage, SEM proxy CORS público.
+  // O backend responde Access-Control-Allow-Origin: * nas rotas
+  // /storage/v1/object/public/*, então a extensão não precisa (e não deve)
+  // passar por api.allorigins.win / corsproxy.io — eles caem toda hora.
+  const announcementsSnippet = useMemo(
+    () => `// ===== extensão: avisos (announcements) =====
+// REGRA: fetch DIRETO no Storage da VPS. Proxy CORS público é PROIBIDO.
+// ❌ https://api.allorigins.win/raw?url=...   (cai toda hora, gera "Failed to fetch")
+// ❌ https://corsproxy.io/?...
+// ✅ ${base}/storage/v1/object/public/user-data/admin/<arquivo>.json
+
+const ANNOUNCEMENTS_URL =
+  "${base}/storage/v1/object/public/user-data/admin/<ARQUIVO>-announcements.json";
+
+async function fetchAnnouncements() {
+  // cache-buster evita JSON antigo do Cloudflare/navegador
+  const url = ANNOUNCEMENTS_URL + "?t=" + Date.now();
+
+  const res = await fetch(url, {
+    method: "GET",
+    // sem credenciais: exigido para aceitar Allow-Origin: *
+    credentials: "omit",
+    cache: "no-store",
+    // NÃO envie headers customizados aqui (apikey/authorization):
+    // eles disparam preflight desnecessário em arquivo público.
+  });
+
+  if (!res.ok) throw new Error("HTTP " + res.status);
+
+  const data = await res.json();
+  return Array.isArray(data?.announcements) ? data.announcements : [];
+}
+
+// Chame sempre com tratamento de falha: rede fora não pode quebrar a extensão.
+async function loadAnnouncementsSafe() {
+  try {
+    return await fetchAnnouncements();
+  } catch (error) {
+    console.warn("[MRO-ANNOUNCE] falha ao buscar avisos:", error);
+    return [];
+  }
+}`,
+    [base],
+  );
+
+  const manifestSnippet = useMemo(
+    () => `// ===== manifest.json (Manifest V3) =====
+// Sem host_permissions o content script fica preso na origem da página
+// (instagram.com / web.whatsapp.com) e o fetch é bloqueado por CORS.
+{
+  "manifest_version": 3,
+  "name": "${meta.label}",
+  "version": "1.0.0",
+
+  // 👇 libera o fetch direto na API/Storage da VPS (e no backend antigo
+  //    enquanto a transição não terminar). É isto que elimina o proxy CORS.
+  "host_permissions": [
+    "${base}/*",
+    "${LEGACY_ORIGIN}/*"
+  ],
+
+  "permissions": ["storage"],
+
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*", "https://web.whatsapp.com/*"],
+      "js": ["contentscript.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+
+// Se preferir centralizar as chamadas no service worker (recomendado, pois
+// ele não sofre a política da página), use:
+//   chrome.runtime.sendMessage({ type: "GET_ANNOUNCEMENTS" })
+// e no background.js responda com o fetch direto mostrado no bloco anterior.`,
+    [base, meta.label],
+  );
+
+  const corsCheckSnippet = `# Provar que o CORS está liberado (rode no seu terminal):
+curl -s -D- -o /dev/null \\
+  -H 'Origin: chrome-extension://mro-extension' \\
+  '${base}/storage/v1/object/public/user-data/admin/extension-announcements.json' \\
+  | grep -i 'access-control-allow-origin'
+
+# Esperado: access-control-allow-origin: *
+# Se não aparecer, rode na VPS (não mexe em .env, banco, uploads nem tokens):
+#   sudo bash /var/www/ia-mro/deploy/fix-storage-cors.sh
+# e purgue o cache do Cloudflare para /storage/v1/object/public/*`;
+
   const healthSnippet = `# 1) o backend da VPS está de pé?
 curl -s ${base}/health | jq
 
