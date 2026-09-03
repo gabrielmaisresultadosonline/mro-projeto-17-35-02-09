@@ -227,12 +227,20 @@ serve(async (req) => {
     const metaResult = await metaResponse.json();
     
     if (!metaResponse.ok) {
-      console.error('[META-CONVERSIONS] Meta API error:', metaResult);
+      // Erros da Graph API (ex.: OAuthException 190 token inválido) são
+      // registrados mas devolvidos com 200 para não derrubar a página.
+      console.error('[META-CONVERSIONS] Meta API error:', JSON.stringify(metaResult));
       return new Response(
-        JSON.stringify({ success: false, error: metaResult }),
-        { status: metaResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({
+          success: false,
+          skipped: true,
+          token_source: resolved.source,
+          error: metaResult,
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
 
     console.log('[META-CONVERSIONS] Meta API response:', metaResult);
 
