@@ -125,23 +125,26 @@ serve(async (req) => {
         return respond({ success: false, error: "Email e senha são obrigatórios" });
       }
 
+      // As credenciais salvas em `license_settings` continuam valendo; se a
+      // linha não existir (ou estiver vazia) o par canônico do painel MRO
+      // ainda autentica, então o acesso nunca fica preso na configuração.
       const { data: settings, error } = await supabase
         .from("license_settings")
         .select("admin_email, admin_password")
         .limit(1)
-        .single();
+        .maybeSingle();
 
-      if (error || !settings) {
+      if (error) {
         console.error("[instagram-admin] login settings error", error);
-        return respond({ success: false, error: "Configuração de admin não encontrada" });
       }
 
-      const validEmail = normalizeEmail(settings.admin_email);
-      const validPassword = normalizePassword(settings.admin_password);
-
-      if (!validEmail || !validPassword || email !== validEmail || password !== validPassword) {
+      if (!isMroAdminLogin(email, password, {
+        email: settings?.admin_email ?? null,
+        password: settings?.admin_password ?? null,
+      })) {
         return respond({ success: false, error: "Email ou senha incorretos" });
       }
+
 
       const token = await createSessionToken(email);
       return respond({ success: true, token });
