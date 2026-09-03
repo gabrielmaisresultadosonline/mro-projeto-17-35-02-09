@@ -34,20 +34,53 @@ const ExtensionAnnouncementDocs = ({ announcementId, isOpen, onClose, targetArea
   const label = targetArea === 'extension' ? 'Extensão Chrome' : `Extensão Chrome ${extensionNumber}`;
   const endpoint = `${supabaseUrl}/storage/v1/object/public/user-data/admin/${fileName}`;
 
-  const fetchCode = `// 🔔 Buscar avisos da extensão
+  const fetchCode = `// 🔔 Buscar avisos da extensão — FETCH DIRETO, SEM PROXY CORS
+// ❌ PROIBIDO: https://api.allorigins.win/raw?url=...  (sai do ar => "Failed to fetch")
+// ❌ PROIBIDO: https://corsproxy.io/?...
+// ✅ O backend já envia Access-Control-Allow-Origin: * nesta rota.
 const ANNOUNCEMENTS_URL = '${endpoint}';
 
 async function fetchExtensionAnnouncements() {
   try {
-    const response = await fetch(ANNOUNCEMENTS_URL + '?t=' + Date.now());
+    const response = await fetch(ANNOUNCEMENTS_URL + '?t=' + Date.now(), {
+      method: 'GET',
+      credentials: 'omit',   // obrigatório para aceitar Allow-Origin: *
+      cache: 'no-store',     // evita JSON antigo em cache
+      // sem headers customizados: apikey/authorization forçam preflight à toa
+    });
     if (!response.ok) return [];
-    
+
     const data = await response.json();
-    return data.announcements || [];
+    return Array.isArray(data.announcements) ? data.announcements : [];
   } catch (error) {
     console.error('Erro ao buscar avisos:', error);
     return [];
   }
+}`;
+
+  // Sem host_permissions o content script herda a origem da página
+  // (instagram.com / web.whatsapp.com) e o navegador bloqueia o fetch.
+  const manifestCode = `// 📄 manifest.json (Manifest V3) — permissões obrigatórias
+{
+  "manifest_version": 3,
+  "name": "${label}",
+  "version": "1.0.0",
+
+  // 👇 é isto que dispensa qualquer proxy CORS público
+  "host_permissions": [
+    "${supabaseUrl}/*",
+    "https://api.maisresultadosonline.com.br/*"
+  ],
+
+  "permissions": ["storage"],
+
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*", "https://web.whatsapp.com/*"],
+      "js": ["contentscript.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }`;
 
   const displayLogicCode = `// 📋 Lógica de exibição de avisos
@@ -325,6 +358,23 @@ interface ExtensionAnnouncement {
           </section>
 
           <section>
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 mb-4">
+              <h3 className="text-sm font-bold text-destructive mb-1">🚫 Nunca use proxy CORS público</h3>
+              <p className="text-xs text-muted-foreground">
+                <code>api.allorigins.win</code>, <code>corsproxy.io</code> e similares saem do ar e causam{' '}
+                <code>Failed to fetch</code>. O endpoint acima já responde{' '}
+                <code>Access-Control-Allow-Origin: *</code>: faça o fetch direto e declare{' '}
+                <code>host_permissions</code> no manifest.
+              </p>
+            </div>
+            <h3 className="text-lg font-bold mb-3 flex items-center gap-2"><Settings className="w-5 h-5 text-orange-500" /> Manifest (host_permissions)</h3>
+            <div className="bg-secondary/50 rounded-lg p-4 relative mb-8">
+              <Button variant="ghost" size="sm" className="absolute top-2 right-2" onClick={() => copyToClipboard(manifestCode, 'Manifest')}>
+                {copiedSection === 'Manifest' ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+              </Button>
+              <pre className="text-xs text-orange-400 overflow-x-auto whitespace-pre-wrap">{manifestCode}</pre>
+            </div>
+
             <h3 className="text-lg font-bold mb-3 flex items-center gap-2"><Bell className="w-5 h-5 text-purple-500" /> 1. Buscar Avisos</h3>
             <div className="bg-secondary/50 rounded-lg p-4 relative">
               <Button variant="ghost" size="sm" className="absolute top-2 right-2" onClick={() => copyToClipboard(fetchCode, 'Buscar')}>
