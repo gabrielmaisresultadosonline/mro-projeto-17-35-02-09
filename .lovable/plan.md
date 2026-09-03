@@ -1,19 +1,21 @@
-# Corrigir uploads e ações administrativas
+# Corrigir definitivamente os logins administrativos
 
 ## Objetivo
-Remover os bloqueios de criação, listagem e upload em `/admin` e `/adminusuario`, mantendo autenticação e proteção fora dos painéis administrativos.
+Fazer `/admin`, `/adminusuario` e `/instagram-nova-admin` autenticarem pelas credenciais já existentes na VPS/PostgreSQL, sem colocar senha no bundle do navegador e sem alterar banco, uploads ou secrets.
 
 ## Implementação
-1. Corrigir a ordem das rotas do storage local para que `list`, assinatura e operações administrativas não sejam confundidas com upload genérico.
-2. Fazer o storage reconhecer a sessão administrativa (`mro_admin_session`) nas requisições e permitir aos admins autenticados criar/listar/enviar/remover arquivos em qualquer bucket necessário, sem abrir escrita pública.
-3. Tornar uploads robustos para `multipart/form-data` e corpo binário, criar diretórios automaticamente e devolver erros claros; ajustar permissões do diretório de uploads no deploy para o usuário do PM2.
-4. Corrigir a função `user-cloud-storage` no backend local e garantir que as ações administrativas enviem a sessão de admin, evitando o erro 500 ao carregar usuários PRO.
-5. Normalizar URLs antigas de imagens de perfil nas telas administrativas para o storage local, eliminando referências a hosts Supabase desativados.
-6. Adicionar uma migração idempotente para os buckets/tabelas necessários e validar rotas críticas no próprio `deploy.sh` antes de concluir o corte.
+1. Corrigir o repositório oficial em `deploy.sh` para o GitHub atual, impedindo que o deploy restaure código antigo.
+2. Criar autenticação administrativa nativa no backend para os endpoints usados pelos três painéis, lendo apenas as credenciais existentes no ambiente e/ou configuração do PostgreSQL.
+3. Emitir sessões HMAC com expiração e validar comparações de forma segura; nenhuma senha será devolvida ao navegador ou gravada no storage.
+4. Remover credenciais administrativas hardcoded dos fluxos frontend afetados e reutilizar somente o token de sessão retornado pelo backend.
+5. Adicionar verificações de deploy para confirmar os dois endpoints de login sem imprimir valores sensíveis.
 
-## Resultado esperado
-- Listagem de `user-data` deixa de retornar 403.
-- Upload em `assets/announcements` e demais gerenciadores administrativos funciona.
-- Usuários PRO carregam sem erro 500.
-- Avatares e capas antigas usam a URL local.
-- Usuários comuns continuam sem permissão de escrita administrativa.
+## Validação
+- Testar login inválido e contrato de resposta dos endpoints.
+- Confirmar que o build passa e que não há senha administrativa no bundle gerado.
+- Confirmar que o deploy preserva `server/.env`, PostgreSQL e uploads e usa o repositório novo.
+
+## Detalhes técnicos
+- `/admin` e `/adminusuario`: sessão com escopo `mro-main-admin`.
+- `/instagram-nova-admin`: sessão com escopo `instagram-admin`.
+- O corpo de login continuará protegido por HTTPS; credenciais não serão hardcoded, logadas nem retornadas pelas APIs.
