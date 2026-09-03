@@ -34,20 +34,53 @@ const ExtensionAnnouncementDocs = ({ announcementId, isOpen, onClose, targetArea
   const label = targetArea === 'extension' ? 'Extensão Chrome' : `Extensão Chrome ${extensionNumber}`;
   const endpoint = `${supabaseUrl}/storage/v1/object/public/user-data/admin/${fileName}`;
 
-  const fetchCode = `// 🔔 Buscar avisos da extensão
+  const fetchCode = `// 🔔 Buscar avisos da extensão — FETCH DIRETO, SEM PROXY CORS
+// ❌ PROIBIDO: https://api.allorigins.win/raw?url=...  (sai do ar => "Failed to fetch")
+// ❌ PROIBIDO: https://corsproxy.io/?...
+// ✅ O backend já envia Access-Control-Allow-Origin: * nesta rota.
 const ANNOUNCEMENTS_URL = '${endpoint}';
 
 async function fetchExtensionAnnouncements() {
   try {
-    const response = await fetch(ANNOUNCEMENTS_URL + '?t=' + Date.now());
+    const response = await fetch(ANNOUNCEMENTS_URL + '?t=' + Date.now(), {
+      method: 'GET',
+      credentials: 'omit',   // obrigatório para aceitar Allow-Origin: *
+      cache: 'no-store',     // evita JSON antigo em cache
+      // sem headers customizados: apikey/authorization forçam preflight à toa
+    });
     if (!response.ok) return [];
-    
+
     const data = await response.json();
-    return data.announcements || [];
+    return Array.isArray(data.announcements) ? data.announcements : [];
   } catch (error) {
     console.error('Erro ao buscar avisos:', error);
     return [];
   }
+}`;
+
+  // Sem host_permissions o content script herda a origem da página
+  // (instagram.com / web.whatsapp.com) e o navegador bloqueia o fetch.
+  const manifestCode = `// 📄 manifest.json (Manifest V3) — permissões obrigatórias
+{
+  "manifest_version": 3,
+  "name": "${label}",
+  "version": "1.0.0",
+
+  // 👇 é isto que dispensa qualquer proxy CORS público
+  "host_permissions": [
+    "${supabaseUrl}/*",
+    "https://api.maisresultadosonline.com.br/*"
+  ],
+
+  "permissions": ["storage"],
+
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*", "https://web.whatsapp.com/*"],
+      "js": ["contentscript.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }`;
 
   const displayLogicCode = `// 📋 Lógica de exibição de avisos
