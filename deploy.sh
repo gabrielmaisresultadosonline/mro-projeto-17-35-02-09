@@ -140,12 +140,33 @@ if [ -d .git ]; then
     fi
     ok "origin corrigido para $REPO_URL"
   fi
-  git fetch origin main --quiet
-  git reset --hard origin/main --quiet
-  ok "Código em $(git rev-parse --short HEAD) ($(git remote get-url origin))."
+
+  # Fetch com verificação explícita: um fetch falhando em silêncio era a causa
+  # de "deploy sem efeito" (o reset reaproveitava o origin/main antigo).
+  git remote prune origin >/dev/null 2>&1 || true
+  git fetch --prune --force origin main \
+    || fail "Não foi possível buscar 'main' em $REPO_URL (verifique rede/credenciais do GitHub)."
+
+  REMOTE_SHA="$(git rev-parse origin/main)"
+  LOCAL_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
+  # -B garante que estamos na branch main mesmo se o clone estava em detached HEAD.
+  git checkout -B main origin/main --quiet || fail "Falha ao alinhar a branch main."
+  git reset --hard origin/main --quiet || fail "Falha ao aplicar origin/main."
+  # Remove somente artefatos versionados removidos no repo novo; server/.env,
+  # dist/, uploads/ e node_modules continuam intocados (ver .gitignore).
+  git clean -fd -e server/.env -e uploads -e dist -e node_modules --quiet 2>/dev/null || true
+
+  if [ "$LOCAL_SHA" = "$REMOTE_SHA" ]; then
+    ok "Código já estava em $(git rev-parse --short HEAD) (nada novo em origin/main)."
+  else
+    ok "Código atualizado: ${LOCAL_SHA:0:7} -> $(git rev-parse --short HEAD)."
+  fi
+  echo "   origin: $(git remote get-url origin)"
+  echo "   commit: $(git log -1 --pretty='%h %ad %s' --date=short)"
 else
   warn "Não é um repositório git; usando os arquivos presentes no disco."
 fi
+
 
 
 # ---------- 2. Dependências ----------
