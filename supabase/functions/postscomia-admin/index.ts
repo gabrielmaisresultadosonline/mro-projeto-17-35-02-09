@@ -301,11 +301,14 @@ Deno.serve(async (req) => {
       return json({ success: ok });
     }
 
-    // Admin gate
-    if (
-      (body.email || "").toString().trim().toLowerCase() !== ADMIN_EMAIL ||
-      body.password !== ADMIN_PASSWORD
-    ) {
+    // Admin gate: aceita o par email/senha (login direto na página) OU o token
+    // de sessão do /admin, para que o painel embutido não precise mais receber
+    // a senha administrativa no frontend.
+    const hasPasswordPair =
+      (body.email || "").toString().trim().toLowerCase() === ADMIN_EMAIL &&
+      body.password === ADMIN_PASSWORD;
+
+    if (!hasPasswordPair && !(await isAdminRequest(req, body))) {
       return json({ error: "Unauthorized" }, 401);
     }
 
