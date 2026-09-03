@@ -303,13 +303,11 @@ fi
 # ---------- 7. Serviços ----------
 step "Reiniciando o backend"
 if command -v pm2 >/dev/null 2>&1; then
-  # Reinicie primeiro o processo que mantém o mapa de runners. Matar filhos
-  # antes de startOrReload deixava referências a portas mortas e causava 502.
-  pm2 startOrReload ecosystem.config.cjs --update-env
-  # Agora qualquer runner remanescente pertence à instância anterior e pode
-  # ser removido; o backend novo recria funções sob demanda.
+  # Para o host antes de matar seus filhos. Assim não sobra no processo Node um
+  # mapa apontando para runners/portas já encerrados (causa de 502 pós-deploy).
+  pm2 delete mro-api >/dev/null 2>&1 || true
   pkill -f '[r]unner\.ts' 2>/dev/null || true
-  pm2 restart mro-api --update-env >/dev/null
+  pm2 start ecosystem.config.cjs --update-env
   pm2 save >/dev/null
   ok "PM2 recarregado."
 else
