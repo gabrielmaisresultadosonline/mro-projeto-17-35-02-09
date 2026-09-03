@@ -8,3 +8,8 @@
 
 ## Pendente
 - [ ] Remover senha administrativa hardcoded dos painéis secundários (IAVendeMais, Empresas, ZapMRO Vendas, Instagram Nova Email/Euro, TokensPanel, EstruturaTutoriais, UserHeader, DescontoAlunos, documentação Ads News)
+
+## Login CORS incident
+- [x] Corrigir falha de typecheck que impedia `lovablack-api` de iniciar no Deno
+- [x] Validar no deploy que o POST do login retorna 401 e CORS pela URL pública
+- [x] Preservar sem alterações as credenciais do ambiente e banco existentes

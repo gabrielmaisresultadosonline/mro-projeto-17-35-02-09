@@ -46,7 +46,13 @@ const createServiceClient = (url: string, serviceKey: string) => {
     auth: { persistSession: false, autoRefreshToken: false },
     global: isOpaqueKey ? {
       fetch: (input, init = {}) => {
-        const headers = new Headers(init.headers);
+        // O SDK aceita tanto o RequestInit padrão quanto o tipo estendido do
+        // runtime Deno. A união não expõe `headers` diretamente no typecheck,
+        // embora ambos sejam compatíveis em execução. Normalizamos sem `any`
+        // para impedir que a função deixe de iniciar e transforme o login em
+        // um 502 da CDN sem cabeçalhos CORS.
+        const requestInit = init as RequestInit;
+        const headers = new Headers(requestInit.headers);
         const authorization = headers.get("Authorization");
 
         // Opaque secret keys identify the privileged backend through `apikey`.
@@ -56,7 +62,7 @@ const createServiceClient = (url: string, serviceKey: string) => {
           headers.delete("Authorization");
         }
 
-        return fetch(input, { ...init, headers });
+        return fetch(input, { ...requestInit, headers });
       },
     } : undefined,
   });
