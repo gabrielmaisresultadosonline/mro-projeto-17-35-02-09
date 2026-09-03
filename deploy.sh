@@ -579,6 +579,7 @@ if [ "$CUTOVER" = true ]; then
     head -c 2000 "$ADMIN_LOGIN_BODY" 2>/dev/null || true; echo
     tail -n 150 /var/log/mro/api-out.log 2>/dev/null || true
     tail -n 150 /var/log/mro/api-error.log 2>/dev/null || true
+    echo "  Diagnóstico adicional: bash deploy/diagnose-admin-login.sh"
     rm -f "$ADMIN_LOGIN_HEADERS" "$ADMIN_LOGIN_BODY"
     fail "Login administrativo falhou diretamente no backend local."
   fi
@@ -603,6 +604,7 @@ if [ "$CUTOVER" = true ]; then
     sudo nginx -T 2>/dev/null | grep -nE "server_name .*${API_DOMAIN}|location /functions/v1|proxy_pass http://127.0.0.1" | tail -n 30 || true
     pm2 describe mro-api 2>/dev/null | grep -E "status|script path|exec cwd|restarts|uptime" || true
     tail -n 100 /var/log/mro/api-error.log 2>/dev/null || true
+    echo "  Diagnóstico adicional: bash deploy/diagnose-admin-login.sh"
     rm -f "$ADMIN_LOGIN_HEADERS" "$ADMIN_LOGIN_BODY"
     fail "Login administrativo indisponível ou sem CORS; deploy bloqueado."
   fi
