@@ -127,15 +127,21 @@ serve(async (req) => {
   }
 
   try {
-    const accessToken = Deno.env.get('META_CONVERSIONS_API_TOKEN');
-    
-    if (!accessToken) {
+    const resolved = await resolveMetaToken();
+
+    if (!resolved) {
+      // Sem token não há como enviar: respondemos 200 com skipped para que o
+      // tracking do site nunca quebre a experiência do usuário.
       console.error('[META-CONVERSIONS] Access token not configured');
       return new Response(
-        JSON.stringify({ success: false, error: 'Access token not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: false, skipped: true, error: 'Access token not configured' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const accessToken = resolved.token;
+    console.log('[META-CONVERSIONS] Token source:', resolved.source);
+
 
     const body: RequestBody = await req.json();
     console.log('[META-CONVERSIONS] Received event:', body.event_name, body.event_id);
