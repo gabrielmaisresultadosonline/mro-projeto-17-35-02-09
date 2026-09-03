@@ -158,7 +158,9 @@ const Addmin = () => {
               <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
             </div>
 
-            <Button type="submit" className="w-full" size="lg">Entrar</Button>
+            <Button type="submit" className="w-full" size="lg" disabled={loading}>
+              {loading ? 'Verificando...' : 'Entrar'}
+            </Button>
           </form>
         </Card>
       </div>
