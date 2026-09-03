@@ -58,7 +58,7 @@ for dir in /etc/nginx/sites-enabled /etc/nginx/sites-available /etc/nginx/conf.d
       VHOST="$(readlink -f "$file")"
       break 2
     fi
-  done < <(find "$dir" -maxdepth 1 -type f -o -maxdepth 1 -type l | sort)
+  done < <(find "$dir" -maxdepth 1 \( -type f -o -type l \) | sort)
 done
 [[ -n "$VHOST" ]] || die "Nenhum arquivo do Nginx contém server_name ${API_DOMAIN}."
 ok "vhost: ${VHOST}"
@@ -158,12 +158,17 @@ systemctl reload nginx || service nginx reload
 ok "Nginx recarregado"
 
 # ---------- 6) Provar que o CORS chegou ao navegador ----------
+# Critério de sucesso: o GET (que é o que a extensão realmente faz) precisa
+# devolver Access-Control-Allow-Origin. O OPTIONS só importa em requisição
+# "não simples" — a extensão usa fetch sem headers customizados, portanto o
+# navegador NÃO faz preflight. Um 405 no OPTIONS pelo domínio (típico de
+# Cloudflare/CDN, que não repassa OPTIONS) é apenas informativo.
 log "6/6 Verificação real de CORS (origem de extensão)"
 TEST_PATH="/storage/v1/object/public/user-data/admin/extension-announcements.json"
 FAIL=0
 
 check() {
-  local method="$1" url="$2"
+  local method="$1" url="$2" required="$3"
   local headers
   headers="$(curl -s -o /dev/null -D- -X "$method" \
     -H 'Origin: chrome-extension://mro-extension' \
@@ -172,20 +177,26 @@ check() {
   local status acao
   status="$(printf '%s' "$headers" | awk 'NR==1{print $2}')"
   acao="$(printf '%s' "$headers" | grep -i '^access-control-allow-origin:' | head -1 | tr -d '\r' || true)"
-  printf '  %-8s %-70s status=%s | %s\n' "$method" "$url" "${status:-sem-resposta}" "${acao:-SEM Access-Control-Allow-Origin}"
-  [[ -n "$acao" ]] || FAIL=1
+  printf '  %-8s %-70s status=%s | %s\n' "$method" "$url" "${status:-sem-resposta}" "${acao:-sem header (não exigido)}"
+  if [[ -z "$acao" && "$required" == "obrigatorio" ]]; then
+    FAIL=1
+  fi
 }
 
-check OPTIONS "http://127.0.0.1:${BACKEND_PORT}${TEST_PATH}"
-check GET     "http://127.0.0.1:${BACKEND_PORT}${TEST_PATH}"
-check OPTIONS "https://${API_DOMAIN}${TEST_PATH}"
-check GET     "https://${API_DOMAIN}${TEST_PATH}"
+check OPTIONS "http://127.0.0.1:${BACKEND_PORT}${TEST_PATH}" informativo
+check GET     "http://127.0.0.1:${BACKEND_PORT}${TEST_PATH}" obrigatorio
+check OPTIONS "https://${API_DOMAIN}${TEST_PATH}"            informativo
+check GET     "https://${API_DOMAIN}${TEST_PATH}"            obrigatorio
 
 if [[ "$FAIL" == "0" ]]; then
-  log "RESULTADO: CORS liberado. As extensões podem buscar os avisos direto —"
-  echo "  sem api.allorigins.win, sem corsproxy.io."
+  log "RESULTADO: CORS liberado no GET público (local e domínio)."
+  echo "  As extensões podem buscar os avisos direto — sem api.allorigins.win, sem corsproxy.io."
+  echo "  Requisito nas extensões: fetch(url, { credentials: 'omit', cache: 'no-store' })"
+  echo "  sem headers customizados, e host_permissions no manifest.json (Manifest V3)."
+  echo "  Observação: OPTIONS pelo domínio pode responder 405 (CDN não repassa preflight)."
+  echo "  Isso é inofensivo, pois requisição simples não dispara preflight."
 else
-  warn "Ainda falta o header em alguma camada. Diagnóstico:"
+  warn "O GET público ainda não devolve Access-Control-Allow-Origin. Diagnóstico:"
   echo "  - Cloudflare pode estar servindo cache antigo: purgue o cache da rota /storage/v1/object/public/*"
   echo "    e repita: curl -I -H 'Origin: chrome-extension://x' https://${API_DOMAIN}${TEST_PATH}"
   echo "  - Se o header aparece em 127.0.0.1 e não no domínio, é cache/regra do Cloudflare (não do Nginx)."
@@ -193,3 +204,4 @@ else
   echo "  - Logs úteis (sem segredos): pm2 logs mro-api --lines 50 | grep -i storage"
   exit 1
 fi
+
