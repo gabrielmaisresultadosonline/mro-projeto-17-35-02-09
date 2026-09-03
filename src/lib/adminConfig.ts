@@ -896,12 +896,22 @@ export const logoutAdmin = async (): Promise<void> => {
   localStorage.removeItem('mro_admin_session');
 };
 
-// Returns the Posts com IA / painel admin credentials when the main admin
-// session is active. Used to auto-login embedded admin panels without
-// asking the operator to sign in twice.
-export const getAdminCredentials = (): { email: string; password: string } | null => {
-  if (!isAdminLoggedIn()) return null;
-  return { email: ADMIN_EMAIL.toLowerCase(), password: ADMIN_PASSWORD };
+/**
+ * Credenciais aceitas pelos painéis administrativos embutidos.
+ * Só o token de sessão é propagado — a senha nunca sai do backend.
+ */
+export interface AdminCreds {
+  email?: string;
+  password?: string;
+  admin_token?: string;
+}
+
+// Reaproveita a sessão ativa do /admin para autenticar painéis embutidos,
+// enviando apenas o token HMAC emitido pelo servidor.
+export const getAdminCredentials = (): AdminCreds | null => {
+  const token = getAdminSessionToken();
+  if (!token) return null;
+  return { admin_token: token };
 };
 
 export const getAdminSessionToken = (): string | null => {
