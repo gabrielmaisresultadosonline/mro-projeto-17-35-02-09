@@ -355,8 +355,20 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    const { action, ...data } = await req.json();
+    const payload = await req.json();
+    const { action, ...data } = payload;
     logStep("Action received", { action });
+
+    // Este endpoint cria, lista e remove acessos de clientes. Sem sessão
+    // administrativa válida ele ficava acessível a qualquer cliente com a chave
+    // pública; agora exigimos o token HMAC emitido no login do painel.
+    if (!(await isAdminRequest(req, payload))) {
+      logStep("Unauthorized request blocked", { action });
+      return new Response(
+        JSON.stringify({ success: false, error: "Sessão administrativa inválida ou expirada." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     switch (action) {
       case "create_access": {
