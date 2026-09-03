@@ -1,9 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { isAdminRequest } from "../_shared/require-admin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-admin-token",
 };
 
 const ADMIN_EMAIL = "mro@gmail.com";
@@ -301,11 +302,14 @@ Deno.serve(async (req) => {
       return json({ success: ok });
     }
 
-    // Admin gate
-    if (
-      (body.email || "").toString().trim().toLowerCase() !== ADMIN_EMAIL ||
-      body.password !== ADMIN_PASSWORD
-    ) {
+    // Admin gate: aceita o par email/senha (login direto na página) OU o token
+    // de sessão do /admin, para que o painel embutido não precise mais receber
+    // a senha administrativa no frontend.
+    const hasPasswordPair =
+      (body.email || "").toString().trim().toLowerCase() === ADMIN_EMAIL &&
+      body.password === ADMIN_PASSWORD;
+
+    if (!hasPasswordPair && !(await isAdminRequest(req, body))) {
       return json({ error: "Unauthorized" }, 401);
     }
 

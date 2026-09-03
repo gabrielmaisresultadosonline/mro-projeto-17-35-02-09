@@ -842,7 +842,9 @@ export const isAdminLoggedIn = (): boolean => {
     if (!stored) return false;
 
     const session = JSON.parse(stored) as { email?: unknown; token?: unknown; expiresAt?: unknown };
-    const emailOk = typeof session.email === 'string' && session.email.toUpperCase() === 'MRO@GMAIL.COM';
+    // O email administrativo pode ser personalizado no servidor; validar um
+    // valor fixo aqui derrubava sessões legítimas. O que autentica é o token.
+    const emailOk = typeof session.email === 'string' && session.email.includes('@');
     const tokenOk = typeof session.token === 'string' && session.token.length > 0;
     const notExpired = !(typeof session.expiresAt === 'number' && session.expiresAt < Date.now());
 
@@ -861,20 +863,23 @@ export const isAdminLoggedIn = (): boolean => {
 // Verify admin - alias for isAdminLoggedIn
 export const verifyAdmin = isAdminLoggedIn;
 
-const ADMIN_EMAIL = 'MRO@GMAIL.COM';
-const ADMIN_PASSWORD = 'Ga145523@';
-
-// Login admin - validates credentials
+// Login admin - a validação acontece exclusivamente no backend. Nenhuma
+// credencial administrativa é embutida no bundle do navegador.
 export const loginAdmin = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+  const normalizedEmail = email.trim();
+  if (!normalizedEmail || !password) {
+    return { success: false, error: 'Informe email e senha' };
+  }
+
   try {
     const { data, error } = await supabase.functions.invoke('lovablack-api', {
-      body: { action: 'admin_login', email: email.trim(), password },
+      body: { action: 'admin_login', email: normalizedEmail, password },
     });
     if (error || !data?.success || !data?.token) {
       return { success: false, error: data?.error || 'Credenciais inválidas' };
     }
     localStorage.setItem('mro_admin_session', JSON.stringify({
-      email: ADMIN_EMAIL,
+      email: normalizedEmail.toLowerCase(),
       token: data.token,
       expiresAt: data.expires_at,
       loginAt: new Date().toISOString(),
@@ -891,12 +896,22 @@ export const logoutAdmin = async (): Promise<void> => {
   localStorage.removeItem('mro_admin_session');
 };
 
-// Returns the Posts com IA / painel admin credentials when the main admin
-// session is active. Used to auto-login embedded admin panels without
-// asking the operator to sign in twice.
-export const getAdminCredentials = (): { email: string; password: string } | null => {
-  if (!isAdminLoggedIn()) return null;
-  return { email: ADMIN_EMAIL.toLowerCase(), password: ADMIN_PASSWORD };
+/**
+ * Credenciais aceitas pelos painéis administrativos embutidos.
+ * Só o token de sessão é propagado — a senha nunca sai do backend.
+ */
+export interface AdminCreds {
+  email?: string;
+  password?: string;
+  admin_token?: string;
+}
+
+// Reaproveita a sessão ativa do /admin para autenticar painéis embutidos,
+// enviando apenas o token HMAC emitido pelo servidor.
+export const getAdminCredentials = (): AdminCreds | null => {
+  const token = getAdminSessionToken();
+  if (!token) return null;
+  return { admin_token: token };
 };
 
 export const getAdminSessionToken = (): string | null => {

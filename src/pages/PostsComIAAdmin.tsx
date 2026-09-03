@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2, LogOut, RefreshCw, CheckCircle2, Trash2, DollarSign, Users, Clock, TrendingUp, Mail, Video, Plus, Pencil, X, UploadCloud, BarChart3, Settings, UserPlus, Eye } from "lucide-react";
 import HeroVideoVPSUploader from "@/components/HeroVideoVPSUploader";
-import { getAdminCredentials } from "@/lib/adminConfig";
+import { getAdminCredentials, type AdminCreds } from "@/lib/adminConfig";
 
 
 const STORAGE_KEY = "postscomia_admin_auth";
@@ -35,7 +35,7 @@ interface PostsComIAAdminProps {
 }
 
 export default function PostsComIAAdmin({ embedded = false }: PostsComIAAdminProps) {
-  const [creds, setCreds] = useState<{ email: string; password: string } | null>(null);
+  const [creds, setCreds] = useState<AdminCreds | null>(null);
   const [emailInput, setEmailInput] = useState("");
   const [pwInput, setPwInput] = useState("");
   const [loginErr, setLoginErr] = useState("");
@@ -526,7 +526,7 @@ function ModulesPanel({
   onNew: () => void;
   onEdit: (m: any) => void;
   onDelete: (id: string) => void;
-  creds: { email: string; password: string };
+  creds: AdminCreds;
 }) {
   return (
     <div>
@@ -597,7 +597,7 @@ function ModuleEditor({
   module: any;
   onClose: () => void;
   onSave: (m: any) => void;
-  creds: { email: string; password: string };
+  creds: AdminCreds;
 }) {
   const [form, setForm] = useState(m);
   return (
@@ -663,7 +663,7 @@ function UploadField({
   accept: string;
   value: string;
   onChange: (url: string) => void;
-  creds: { email: string; password: string };
+  creds: AdminCreds;
 }) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -729,7 +729,7 @@ function SettingsPanel({
 }: {
   settings: any;
   onSave: (s: any) => void;
-  creds: { email: string; password: string };
+  creds: AdminCreds;
 }) {
   const [form, setForm] = useState<any>(settings || {});
   useEffect(() => { setForm(settings || {}); }, [settings]);

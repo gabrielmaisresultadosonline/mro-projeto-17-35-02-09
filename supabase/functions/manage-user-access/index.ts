@@ -1,10 +1,11 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { isAdminRequest } from "../_shared/require-admin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-admin-token",
 };
 
 const logStep = (step: string, details?: any) => {
@@ -355,8 +356,20 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    const { action, ...data } = await req.json();
+    const payload = await req.json();
+    const { action, ...data } = payload;
     logStep("Action received", { action });
+
+    // Este endpoint cria, lista e remove acessos de clientes. Sem sessão
+    // administrativa válida ele ficava acessível a qualquer cliente com a chave
+    // pública; agora exigimos o token HMAC emitido no login do painel.
+    if (!(await isAdminRequest(req, payload))) {
+      logStep("Unauthorized request blocked", { action });
+      return new Response(
+        JSON.stringify({ success: false, error: "Sessão administrativa inválida ou expirada." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     switch (action) {
       case "create_access": {
