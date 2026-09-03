@@ -540,6 +540,31 @@ if [ "$CUTOVER" = true ]; then
   fi
   rm -f "$FUNCTION_CHECK_BODY"
 
+  # Autenticação administrativa: confirmamos apenas o CONTRATO das rotas, sem
+  # enviar nem imprimir credenciais reais. Um login inválido precisa ser
+  # recusado e o endpoint de acessos precisa exigir sessão administrativa.
+  ADMIN_LOGIN_STATUS="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' -X POST \
+    -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
+    -H "Content-Type: application/json" \
+    --data '{"action":"admin_login","email":"deploy-check@invalid.local","password":"deploy-check-invalid"}' \
+    "${API_URL_FINAL%/}/functions/v1/lovablack-api" || true)"
+  if [ "$ADMIN_LOGIN_STATUS" = "401" ]; then
+    ok "Login administrativo ativo e recusando credenciais inválidas."
+  else
+    warn "Rota de login administrativo respondeu HTTP ${ADMIN_LOGIN_STATUS:-sem status} (esperado 401 para senha inválida)."
+  fi
+
+  ACCESS_GUARD_STATUS="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' -X POST \
+    -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
+    -H "Content-Type: application/json" \
+    --data '{"action":"list_accesses"}' \
+    "${API_URL_FINAL%/}/functions/v1/manage-user-access" || true)"
+  if [ "$ACCESS_GUARD_STATUS" = "401" ]; then
+    ok "Endpoint de acessos protegido por sessão administrativa."
+  else
+    warn "manage-user-access respondeu HTTP ${ACCESS_GUARD_STATUS:-sem status} sem token (esperado 401)."
+  fi
+
   # Esta função consulta o PostgreSQL e entrega a configuração dos vídeos;
   # portanto testa de uma vez proxy, runtime Deno e acesso interno ao REST.
   if curl -sf --max-time 70 -X POST \
