@@ -58,7 +58,7 @@ for dir in /etc/nginx/sites-enabled /etc/nginx/sites-available /etc/nginx/conf.d
       VHOST="$(readlink -f "$file")"
       break 2
     fi
-  done < <(find "$dir" -maxdepth 1 -type f -o -maxdepth 1 -type l | sort)
+  done < <(find "$dir" -maxdepth 1 \( -type f -o -type l \) | sort)
 done
 [[ -n "$VHOST" ]] || die "Nenhum arquivo do Nginx contém server_name ${API_DOMAIN}."
 ok "vhost: ${VHOST}"
