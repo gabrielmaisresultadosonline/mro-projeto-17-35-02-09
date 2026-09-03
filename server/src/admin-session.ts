@@ -11,11 +11,14 @@ function decodeBase64Url(value: string): Buffer {
   return Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }
 
+/** Mesmo fallback usado em supabase/functions/_shared/mro-admin-credentials.ts. */
+const FALLBACK_ADMIN_SESSION_SECRET = 'mro-admin-session-fallback-secret';
+
 /** Valida o mesmo token HMAC emitido pela função lovablack-api. */
 export function hasValidAdminSession(req: Request): boolean {
-  const secret = process.env.MRO_ADMIN_SESSION_SECRET?.trim();
+  const secret = process.env.MRO_ADMIN_SESSION_SECRET?.trim() || FALLBACK_ADMIN_SESSION_SECRET;
   const token = req.header('x-admin-token')?.trim();
-  if (!secret || !token) return false;
+  if (!token) return false;
 
   const parts = token.split('.');
   if (parts.length !== 2) return false;
