@@ -491,6 +491,39 @@ Header 'Authorization: Bearer <jwt>' → formato de claims idêntico (HS256)`}
         code={migrationSnippet}
       />
 
+      <Card className="p-4 space-y-2 border-destructive/40 bg-destructive/5">
+        <h4 className="font-semibold text-sm text-destructive">
+          🚫 Proxy CORS público é proibido nas extensões
+        </h4>
+        <p className="text-xs text-muted-foreground">
+          Nunca use <code>api.allorigins.win</code>, <code>corsproxy.io</code> ou similares para ler os avisos. Eles
+          saem do ar sem aviso e produzem o erro <code>Failed to fetch</code> na extensão. O backend da VPS já responde{' '}
+          <code>Access-Control-Allow-Origin: *</code> em <code>/storage/v1/object/public/*</code>, então o{' '}
+          <strong>fetch é direto</strong> — basta declarar <code>host_permissions</code> no manifest.
+        </p>
+      </Card>
+
+      <Block
+        id="announcements"
+        title="6) Avisos (announcements) sem proxy CORS"
+        description="Leitura direta do Storage da VPS. É o código que substitui qualquer proxy público."
+        code={announcementsSnippet}
+      />
+
+      <Block
+        id="manifest"
+        title="7) manifest.json — host_permissions obrigatórias"
+        description="Sem estas permissões o content script é bloqueado por CORS e alguém volta a usar proxy público."
+        code={manifestSnippet}
+      />
+
+      <Block
+        id="cors-check"
+        title="8) Conferir o CORS em 10 segundos"
+        description="Se o header não vier, o script da VPS corrige sem tocar em dados, .env, tokens ou uploads."
+        code={corsCheckSnippet}
+      />
+
       <Block
         id="health"
         title="6) Checklist de validação antes de desligar o Supabase"
