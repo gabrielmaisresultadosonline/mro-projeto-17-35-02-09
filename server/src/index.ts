@@ -41,12 +41,15 @@ app.set("trust proxy", true);
  */
 const PUBLIC_READ_PREFIXES = ["/storage/v1/object/public/", "/storage/v1/object/info/public/"];
 
-app.use((req, res, next) => {
-  const isPublicRead =
+function isPublicStorageRead(req: Request): boolean {
+  return (
     PUBLIC_READ_PREFIXES.some((prefix) => req.path.startsWith(prefix)) &&
-    (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS");
+    (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")
+  );
+}
 
-  if (!isPublicRead) return next();
+app.use((req, res, next) => {
+  if (!isPublicStorageRead(req)) return next();
 
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
@@ -66,26 +69,32 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(
-  cors({
-    origin: env.corsOrigins.includes("*") ? true : env.corsOrigins,
-    credentials: true,
-    exposedHeaders: ["Content-Range", "X-Total-Count"],
-    allowedHeaders: [
-      "authorization",
-      "apikey",
-      "content-type",
-      "prefer",
-      "range",
-      "x-client-info",
-      "x-upsert",
-      "x-internal-call",
-      "x-admin-token",
-      "accept-profile",
-      "content-profile",
-    ],
-  }),
-);
+// CORS padrão (com credenciais) para o restante da API. Não roda nas leituras
+// públicas acima, senão sobrescreveria o `*` pela origem refletida.
+const credentialedCors = cors({
+  origin: env.corsOrigins.includes("*") ? true : env.corsOrigins,
+  credentials: true,
+  exposedHeaders: ["Content-Range", "X-Total-Count"],
+  allowedHeaders: [
+    "authorization",
+    "apikey",
+    "content-type",
+    "prefer",
+    "range",
+    "x-client-info",
+    "x-upsert",
+    "x-internal-call",
+    "x-admin-token",
+    "accept-profile",
+    "content-profile",
+  ],
+});
+
+app.use((req, res, next) => {
+  if (isPublicStorageRead(req)) return next();
+  credentialedCors(req, res, next);
+});
+
 
 
 // Webhooks precisam do corpo bruto para validar assinatura (Meta/Stripe/InfiniPay).
