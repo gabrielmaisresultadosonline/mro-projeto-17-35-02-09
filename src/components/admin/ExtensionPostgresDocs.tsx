@@ -526,7 +526,7 @@ Header 'Authorization: Bearer <jwt>' → formato de claims idêntico (HS256)`}
 
       <Block
         id="health"
-        title="6) Checklist de validação antes de desligar o Supabase"
+        title="9) Checklist de validação antes de desligar o Supabase"
         description="Rode na VPS ou no seu terminal. Só desligue o backend antigo quando as duas respostas vierem OK."
         code={healthSnippet}
       />
