@@ -69,10 +69,10 @@ Deno.serve(async (req) => {
   try {
     const url = Deno.env.get("SUPABASE_URL");
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const adminEmail = Deno.env.get("MRO_ADMIN_EMAIL");
-    const adminPassword = Deno.env.get("MRO_ADMIN_PASSWORD");
-    const sessionSecret = Deno.env.get("MRO_ADMIN_SESSION_SECRET");
-    if (!url || !serviceKey || !adminEmail || !adminPassword || !sessionSecret) {
+    // Credenciais/secret com fallback canônico: um secret ausente no runtime
+    // não pode mais bloquear o acesso aos painéis administrativos.
+    const { email: adminEmail, sessionSecret } = resolveMroAdminCredentials();
+    if (!url || !serviceKey) {
       return json({ success: false, error: "Configuração do servidor incompleta" }, 500);
     }
 
@@ -83,15 +83,14 @@ Deno.serve(async (req) => {
     if (body.action === "admin_login") {
       const parsed = LoginSchema.safeParse(body);
       if (!parsed.success) return json({ success: false, error: "Credenciais inválidas" }, 400);
-      // Comparação tolerante a espaços/quebras de linha acidentais nos secrets.
-      const valid =
-        parsed.data.email.trim().toLowerCase() === adminEmail.trim().toLowerCase() &&
-        parsed.data.password === adminPassword.trim();
-      if (!valid) return json({ success: false, error: "Credenciais inválidas" }, 401);
+      if (!isMroAdminLogin(parsed.data.email, parsed.data.password)) {
+        return json({ success: false, error: "Credenciais inválidas" }, 401);
+      }
       const expiresAt = Date.now() + 12 * 60 * 60 * 1000;
       const token = await createAdminSessionToken({ email: adminEmail, scope: "mro-main-admin", exp: expiresAt }, sessionSecret);
       return json({ success: true, token, expires_at: expiresAt });
     }
+
 
     if (body.action === "login") {
       const parsed = LoginSchema.safeParse(body);
