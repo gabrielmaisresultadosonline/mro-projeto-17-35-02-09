@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { env } from "../env.js";
 import { RestError } from "../rest/identifiers.js";
 import { handleNativeUserCloudStorage } from "./user-cloud-storage-native.js";
+import { handleNativeLovablackAdminLogin } from "./lovablack-admin-native.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const functionsDir = path.resolve(here, "../../", env.functions.dir);
@@ -228,8 +229,14 @@ async function startFunction(name: string, entry: string): Promise<RunningFuncti
 async function ensureFunction(name: string): Promise<RunningFunction> {
   const existing = running.get(name);
   if (existing) {
-    await existing.ready;
-    return existing;
+    // Um runner pode morrer entre o evento de saída e esta requisição. Nunca
+    // reutilize a porta/processo obsoleto: isso virava ECONNREFUSED e 502.
+    if (existing.process.exitCode === null && existing.process.signalCode === null) {
+      await existing.ready;
+      return existing;
+    }
+    running.delete(name);
+    releasePort(existing.port);
   }
 
   const entry = functionEntrypoint(name);
@@ -252,6 +259,10 @@ export const functionsRouter = Router();
 
 functionsRouter.all("/:name", async (req, res) => {
   const name = req.params.name;
+
+  if (name === "lovablack-api" && await handleNativeLovablackAdminLogin(req, res)) {
+    return;
+  }
 
   if (name === "user-cloud-storage" && await handleNativeUserCloudStorage(req, res)) {
     return;

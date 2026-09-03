@@ -52,6 +52,8 @@ step "Verificando pré-requisitos"
 for binary in node npm psql pg_dump; do
   command -v "$binary" >/dev/null 2>&1 || fail "$binary não encontrado. Rode ./deploy/install-vps.sh primeiro."
 done
+[ "$CUTOVER" != true ] || command -v pm2 >/dev/null 2>&1 \
+  || fail "PM2 não encontrado. O corte foi bloqueado porque a API ficaria fora do ar."
 [ -f server/.env ] || fail "server/.env não existe. Copie de server/.env.example e preencha."
 install_deno() {
   local arch asset tmp_dir
@@ -301,10 +303,11 @@ fi
 # ---------- 7. Serviços ----------
 step "Reiniciando o backend"
 if command -v pm2 >/dev/null 2>&1; then
-  # Remove processos Deno órfãos de reinícios anteriores; sem isso, eles podem
-  # manter as portas 9100+ ocupadas e provocar 502 nas novas funções.
+  # Para o host antes de matar seus filhos. Assim não sobra no processo Node um
+  # mapa apontando para runners/portas já encerrados (causa de 502 pós-deploy).
+  pm2 delete mro-api >/dev/null 2>&1 || true
   pkill -f '[r]unner\.ts' 2>/dev/null || true
-  pm2 startOrReload ecosystem.config.cjs --update-env
+  pm2 start ecosystem.config.cjs --update-env
   pm2 save >/dev/null
   ok "PM2 recarregado."
 else
@@ -567,6 +570,24 @@ if [ "$CUTOVER" = true ]; then
   # start nunca mais passa pelo deploy como simples aviso.
   ADMIN_LOGIN_HEADERS="$(mktemp)"
   ADMIN_LOGIN_BODY="$(mktemp)"
+  # Primeiro validamos diretamente o Express. Se isto falhar, o diagnóstico é
+  # local (PM2/backend/banco), sem mascaramento da CDN ou do Nginx.
+  ADMIN_LOCAL_STATUS="$(curl -sS --max-time 15 -o "$ADMIN_LOGIN_BODY" -w '%{http_code}' -X POST \
+    -H "Origin: https://maisresultadosonline.com.br" \
+    -H "Content-Type: application/json" \
+    --data '{"action":"admin_login","email":"deploy-check@invalid.local","password":"deploy-check-invalid"}' \
+    "http://127.0.0.1:${PORT_LOCAL}/functions/v1/lovablack-api" || true)"
+  if [ "$ADMIN_LOCAL_STATUS" != "401" ]; then
+    echo "  Login admin local: HTTP ${ADMIN_LOCAL_STATUS:-sem status}"
+    head -c 2000 "$ADMIN_LOGIN_BODY" 2>/dev/null || true; echo
+    tail -n 150 /var/log/mro/api-out.log 2>/dev/null || true
+    tail -n 150 /var/log/mro/api-error.log 2>/dev/null || true
+    echo "  Diagnóstico adicional: bash deploy/diagnose-admin-login.sh"
+    rm -f "$ADMIN_LOGIN_HEADERS" "$ADMIN_LOGIN_BODY"
+    fail "Login administrativo falhou diretamente no backend local."
+  fi
+  ok "Login administrativo nativo respondeu na porta local."
+
   ADMIN_LOGIN_STATUS="$(curl -sS --max-time 75 -D "$ADMIN_LOGIN_HEADERS" -o "$ADMIN_LOGIN_BODY" -w '%{http_code}' -X POST \
     -H "Origin: https://maisresultadosonline.com.br" \
     -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
@@ -582,7 +603,11 @@ if [ "$CUTOVER" = true ]; then
   else
     echo "  Login admin: HTTP ${ADMIN_LOGIN_STATUS:-sem status}; headers CORS: $ADMIN_LOGIN_CORS_COUNT; origem: ${ADMIN_LOGIN_CORS_VALUE:-ausente}"
     head -c 2000 "$ADMIN_LOGIN_BODY" 2>/dev/null || true; echo
+    echo "  Diagnóstico Nginx/PM2 (sem exibir variáveis de ambiente):"
+    sudo nginx -T 2>/dev/null | grep -nE "server_name .*${API_DOMAIN}|location /functions/v1|proxy_pass http://127.0.0.1" | tail -n 30 || true
+    pm2 describe mro-api 2>/dev/null | grep -E "status|script path|exec cwd|restarts|uptime" || true
     tail -n 100 /var/log/mro/api-error.log 2>/dev/null || true
+    echo "  Diagnóstico adicional: bash deploy/diagnose-admin-login.sh"
     rm -f "$ADMIN_LOGIN_HEADERS" "$ADMIN_LOGIN_BODY"
     fail "Login administrativo indisponível ou sem CORS; deploy bloqueado."
   fi
