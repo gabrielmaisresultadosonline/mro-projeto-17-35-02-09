@@ -6,8 +6,6 @@ import { Card } from '@/components/ui/card';
 import { Lock, Mail, AlertCircle, ExternalLink, LogOut, Search } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
-const ADMIN_EMAIL = 'mro@gmail.com';
-const ADMIN_PASSWORD = 'Ga145523@';
 const STORAGE_KEY = 'addmin_authenticated';
 
 type AdminLink = {
@@ -85,29 +83,41 @@ const Addmin = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const { toast } = useToast();
 
   useEffect(() => {
-    if (sessionStorage.getItem(STORAGE_KEY) === 'true') {
+    // Só considera autenticado quando existe uma sessão válida emitida pelo
+    // backend; a marca local sozinha não libera mais o hub.
+    if (sessionStorage.getItem(STORAGE_KEY) === 'true' && isAdminLoggedIn()) {
       setAuthenticated(true);
+    } else {
+      sessionStorage.removeItem(STORAGE_KEY);
     }
   }, []);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (email.trim().toLowerCase() === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+    setLoading(true);
+
+    // A validação é feita no backend: nenhuma credencial fica no bundle.
+    const result = await loginAdmin(email, password);
+    setLoading(false);
+
+    if (result.success) {
       sessionStorage.setItem(STORAGE_KEY, 'true');
       setAuthenticated(true);
       toast({ title: 'Acesso liberado', description: 'Bem-vindo ao hub administrativo' });
     } else {
-      setError('Credenciais inválidas');
+      setError(result.error || 'Credenciais inválidas');
     }
   };
 
   const handleLogout = () => {
     sessionStorage.removeItem(STORAGE_KEY);
+    void logoutAdmin();
     setAuthenticated(false);
     setEmail('');
     setPassword('');
