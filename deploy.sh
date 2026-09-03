@@ -169,6 +169,14 @@ else
   warn "Não é um repositório git; usando os arquivos presentes no disco."
 fi
 
+# Scripts auxiliares só existem depois do sync; por isso o chmod fica aqui e não
+# como pré-requisito manual (chmod antes do git falhava com "No such file").
+chmod +x deploy.sh 2>/dev/null || true
+for helper in deploy/*.sh; do
+  [ -f "$helper" ] && chmod +x "$helper" 2>/dev/null || true
+done
+
+
 
 
 # ---------- 2. Dependências ----------
