@@ -52,6 +52,8 @@ step "Verificando pré-requisitos"
 for binary in node npm psql pg_dump; do
   command -v "$binary" >/dev/null 2>&1 || fail "$binary não encontrado. Rode ./deploy/install-vps.sh primeiro."
 done
+[ "$CUTOVER" != true ] || command -v pm2 >/dev/null 2>&1 \
+  || fail "PM2 não encontrado. O corte foi bloqueado porque a API ficaria fora do ar."
 [ -f server/.env ] || fail "server/.env não existe. Copie de server/.env.example e preencha."
 install_deno() {
   local arch asset tmp_dir
@@ -301,10 +303,13 @@ fi
 # ---------- 7. Serviços ----------
 step "Reiniciando o backend"
 if command -v pm2 >/dev/null 2>&1; then
-  # Remove processos Deno órfãos de reinícios anteriores; sem isso, eles podem
-  # manter as portas 9100+ ocupadas e provocar 502 nas novas funções.
-  pkill -f '[r]unner\.ts' 2>/dev/null || true
+  # Reinicie primeiro o processo que mantém o mapa de runners. Matar filhos
+  # antes de startOrReload deixava referências a portas mortas e causava 502.
   pm2 startOrReload ecosystem.config.cjs --update-env
+  # Agora qualquer runner remanescente pertence à instância anterior e pode
+  # ser removido; o backend novo recria funções sob demanda.
+  pkill -f '[r]unner\.ts' 2>/dev/null || true
+  pm2 restart mro-api --update-env >/dev/null
   pm2 save >/dev/null
   ok "PM2 recarregado."
 else

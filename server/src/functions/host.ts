@@ -229,8 +229,14 @@ async function startFunction(name: string, entry: string): Promise<RunningFuncti
 async function ensureFunction(name: string): Promise<RunningFunction> {
   const existing = running.get(name);
   if (existing) {
-    await existing.ready;
-    return existing;
+    // Um runner pode morrer entre o evento de saída e esta requisição. Nunca
+    // reutilize a porta/processo obsoleto: isso virava ECONNREFUSED e 502.
+    if (existing.process.exitCode === null && existing.process.signalCode === null) {
+      await existing.ready;
+      return existing;
+    }
+    running.delete(name);
+    releasePort(existing.port);
   }
 
   const entry = functionEntrypoint(name);
