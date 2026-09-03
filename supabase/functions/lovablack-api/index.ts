@@ -83,7 +83,20 @@ Deno.serve(async (req) => {
     if (body.action === "admin_login") {
       const parsed = LoginSchema.safeParse(body);
       if (!parsed.success) return json({ success: false, error: "Credenciais inválidas" }, 400);
-      if (!isMroAdminLogin(parsed.data.email, parsed.data.password)) {
+
+      // As credenciais podem ter sido personalizadas em license_settings pelo
+      // próprio painel. Sem consultar essa linha, uma troca feita no banco
+      // passava a ser recusada aqui — exatamente o sintoma relatado.
+      const { data: configured } = await db
+        .from("license_settings")
+        .select("admin_email, admin_password")
+        .limit(1)
+        .maybeSingle();
+
+      if (!isMroAdminLogin(parsed.data.email, parsed.data.password, {
+        email: configured?.admin_email ?? null,
+        password: configured?.admin_password ?? null,
+      })) {
         return json({ success: false, error: "Credenciais inválidas" }, 401);
       }
       const expiresAt = Date.now() + 12 * 60 * 60 * 1000;
