@@ -29,26 +29,73 @@ const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", true);
 
-app.use(
-  cors({
-    origin: env.corsOrigins.includes("*") ? true : env.corsOrigins,
-    credentials: true,
-    exposedHeaders: ["Content-Range", "X-Total-Count"],
-    allowedHeaders: [
-      "authorization",
-      "apikey",
-      "content-type",
-      "prefer",
-      "range",
-      "x-client-info",
-      "x-upsert",
-      "x-internal-call",
-      "x-admin-token",
-      "accept-profile",
-      "content-profile",
-    ],
-  }),
-);
+/**
+ * CORS público (wildcard) para leitura de objetos públicos do Storage.
+ *
+ * As extensões (MRO Ferramenta e ZAP MRO) leem `user-data/admin/*.json` de
+ * origens externas — inclusive `chrome-extension://` e requisições com
+ * `Origin: null`. O CORS geral usa `credentials: true`, o que impede o
+ * navegador de aceitar `Access-Control-Allow-Origin: *`. Portanto, para GET,
+ * HEAD e preflight de objetos públicos respondemos wildcard SEM credenciais,
+ * antes do middleware padrão. O restante da API segue igual.
+ */
+const PUBLIC_READ_PREFIXES = ["/storage/v1/object/public/", "/storage/v1/object/info/public/"];
+
+function isPublicStorageRead(req: Request): boolean {
+  return (
+    PUBLIC_READ_PREFIXES.some((prefix) => req.path.startsWith(prefix)) &&
+    (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")
+  );
+}
+
+app.use((req, res, next) => {
+  if (!isPublicStorageRead(req)) return next();
+
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    req.header("access-control-request-headers") ??
+      "authorization, apikey, content-type, range, x-client-info",
+  );
+  res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, ETag");
+  res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader("Vary", "Origin");
+
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
+// CORS padrão (com credenciais) para o restante da API. Não roda nas leituras
+// públicas acima, senão sobrescreveria o `*` pela origem refletida.
+const credentialedCors = cors({
+  origin: env.corsOrigins.includes("*") ? true : env.corsOrigins,
+  credentials: true,
+  exposedHeaders: ["Content-Range", "X-Total-Count"],
+  allowedHeaders: [
+    "authorization",
+    "apikey",
+    "content-type",
+    "prefer",
+    "range",
+    "x-client-info",
+    "x-upsert",
+    "x-internal-call",
+    "x-admin-token",
+    "accept-profile",
+    "content-profile",
+  ],
+});
+
+app.use((req, res, next) => {
+  if (isPublicStorageRead(req)) return next();
+  credentialedCors(req, res, next);
+});
+
+
 
 // Webhooks precisam do corpo bruto para validar assinatura (Meta/Stripe/InfiniPay).
 app.use("/functions/v1", express.raw({ type: "*/*", limit: "50mb" }));
