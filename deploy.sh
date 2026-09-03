@@ -567,6 +567,23 @@ if [ "$CUTOVER" = true ]; then
   # start nunca mais passa pelo deploy como simples aviso.
   ADMIN_LOGIN_HEADERS="$(mktemp)"
   ADMIN_LOGIN_BODY="$(mktemp)"
+  # Primeiro validamos diretamente o Express. Se isto falhar, o diagnóstico é
+  # local (PM2/backend/banco), sem mascaramento da CDN ou do Nginx.
+  ADMIN_LOCAL_STATUS="$(curl -sS --max-time 15 -o "$ADMIN_LOGIN_BODY" -w '%{http_code}' -X POST \
+    -H "Origin: https://maisresultadosonline.com.br" \
+    -H "Content-Type: application/json" \
+    --data '{"action":"admin_login","email":"deploy-check@invalid.local","password":"deploy-check-invalid"}' \
+    "http://127.0.0.1:${PORT_LOCAL}/functions/v1/lovablack-api" || true)"
+  if [ "$ADMIN_LOCAL_STATUS" != "401" ]; then
+    echo "  Login admin local: HTTP ${ADMIN_LOCAL_STATUS:-sem status}"
+    head -c 2000 "$ADMIN_LOGIN_BODY" 2>/dev/null || true; echo
+    tail -n 150 /var/log/mro/api-out.log 2>/dev/null || true
+    tail -n 150 /var/log/mro/api-error.log 2>/dev/null || true
+    rm -f "$ADMIN_LOGIN_HEADERS" "$ADMIN_LOGIN_BODY"
+    fail "Login administrativo falhou diretamente no backend local."
+  fi
+  ok "Login administrativo nativo respondeu na porta local."
+
   ADMIN_LOGIN_STATUS="$(curl -sS --max-time 75 -D "$ADMIN_LOGIN_HEADERS" -o "$ADMIN_LOGIN_BODY" -w '%{http_code}' -X POST \
     -H "Origin: https://maisresultadosonline.com.br" \
     -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
@@ -582,6 +599,9 @@ if [ "$CUTOVER" = true ]; then
   else
     echo "  Login admin: HTTP ${ADMIN_LOGIN_STATUS:-sem status}; headers CORS: $ADMIN_LOGIN_CORS_COUNT; origem: ${ADMIN_LOGIN_CORS_VALUE:-ausente}"
     head -c 2000 "$ADMIN_LOGIN_BODY" 2>/dev/null || true; echo
+    echo "  Diagnóstico Nginx/PM2 (sem exibir variáveis de ambiente):"
+    sudo nginx -T 2>/dev/null | grep -nE "server_name .*${API_DOMAIN}|location /functions/v1|proxy_pass http://127.0.0.1" | tail -n 30 || true
+    pm2 describe mro-api 2>/dev/null | grep -E "status|script path|exec cwd|restarts|uptime" || true
     tail -n 100 /var/log/mro/api-error.log 2>/dev/null || true
     rm -f "$ADMIN_LOGIN_HEADERS" "$ADMIN_LOGIN_BODY"
     fail "Login administrativo indisponível ou sem CORS; deploy bloqueado."

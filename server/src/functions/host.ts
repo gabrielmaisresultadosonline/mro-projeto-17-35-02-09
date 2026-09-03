@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { env } from "../env.js";
 import { RestError } from "../rest/identifiers.js";
 import { handleNativeUserCloudStorage } from "./user-cloud-storage-native.js";
+import { handleNativeLovablackAdminLogin } from "./lovablack-admin-native.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const functionsDir = path.resolve(here, "../../", env.functions.dir);
@@ -252,6 +253,10 @@ export const functionsRouter = Router();
 
 functionsRouter.all("/:name", async (req, res) => {
   const name = req.params.name;
+
+  if (name === "lovablack-api" && await handleNativeLovablackAdminLogin(req, res)) {
+    return;
+  }
 
   if (name === "user-cloud-storage" && await handleNativeUserCloudStorage(req, res)) {
     return;
