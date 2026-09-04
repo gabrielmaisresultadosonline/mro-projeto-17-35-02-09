@@ -124,8 +124,14 @@ const credentialedCors = cors({
     "x-upsert",
     "x-internal-call",
     "x-admin-token",
+    "x-requested-with",
+    "accept",
     "accept-profile",
     "content-profile",
+    "x-supabase-client-platform",
+    "x-supabase-client-platform-version",
+    "x-supabase-client-runtime",
+    "x-supabase-client-runtime-version",
   ],
 });
 
