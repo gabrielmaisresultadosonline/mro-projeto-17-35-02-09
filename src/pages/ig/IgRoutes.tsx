@@ -14,6 +14,9 @@ import IgInbox from "./IgInbox";
 import IgInstagramCallback from "./IgInstagramCallback";
 import IgSettings from "./IgSettings";
 import IgSettingsInstagram from "./IgSettingsInstagram";
+import IgComments from "./IgComments";
+import IgContent from "./IgContent";
+import IgAi from "./IgAi";
 import IgModulePlaceholder from "./IgModulePlaceholder";
 import IgAdminLogin from "./IgAdminLogin";
 import IgAdminDashboard from "./IgAdminDashboard";
@@ -24,12 +27,6 @@ import IgAdminApp from "./IgAdminApp";
 
 /** Módulos das fases 2 a 5: shell e isolamento já ativos, dados reais em breve. */
 const MODULES: Array<{ path: string; title: string; description: string; phase: string }> = [
-  {
-    path: "comments/*",
-    title: "Comentários",
-    description: "Comentários recebidos nos seus posts e Reels, com resposta pública e Direct privado.",
-    phase: "Comentários e resposta privada",
-  },
   {
     path: "automations/*",
     title: "Automações",
@@ -43,12 +40,6 @@ const MODULES: Array<{ path: string; title: string; description: string; phase: 
     phase: "CRM",
   },
   { path: "crm/*", title: "CRM", description: "Funil Kanban dos leads originados no Instagram.", phase: "CRM" },
-  {
-    path: "content/*",
-    title: "Conteúdo",
-    description: "Publicação, agendamento e calendário via Content Publishing API.",
-    phase: "Publicação",
-  },
   { path: "reels/*", title: "Reels", description: "Desempenho dos seus Reels conforme métricas liberadas pela Meta.", phase: "Publicação" },
   { path: "stories/*", title: "Stories", description: "Recursos de Stories oficialmente suportados pela API.", phase: "Publicação" },
   {
@@ -57,7 +48,6 @@ const MODULES: Array<{ path: string; title: string; description: string; phase: 
     description: "Crescimento, conteúdo, audiência, score e oportunidades a partir dos Insights da Meta.",
     phase: "Analytics",
   },
-  { path: "ai/*", title: "IA", description: "Configurações e base de conhecimento da IA de atendimento e conteúdo.", phase: "IA" },
   { path: "settings/team", title: "Equipe", description: "Convites, papéis e permissões dos membros do workspace.", phase: "Configurações" },
   { path: "settings/notifications", title: "Notificações", description: "Escolha quais eventos geram aviso para a sua equipe.", phase: "Configurações" },
   { path: "settings/billing", title: "Plano e cobrança", description: "Plano atual, limites contratados e consumo do período.", phase: "Configurações" },
@@ -76,6 +66,10 @@ const IgRoutes = () => (
     <Route path="inbox" element={<IgInbox />} />
     <Route path="auth/instagram" element={<Navigate to="/IG/settings/instagram" replace />} />
     <Route path="auth/instagram/callback" element={<IgInstagramCallback />} />
+
+    <Route path="comments" element={<IgComments />} />
+    <Route path="content" element={<IgContent />} />
+    <Route path="ai" element={<IgAi />} />
 
     <Route path="settings" element={<IgSettings />} />
     <Route path="settings/instagram" element={<IgSettingsInstagram />} />
