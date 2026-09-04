@@ -29,7 +29,18 @@ type Action =
   | "conversations"
   | "messages"
   | "send_message"
-  | "subscribe_webhook";
+  | "subscribe_webhook"
+  | "comments"
+  | "sync_comments"
+  | "reply_comment"
+  | "hide_comment"
+  | "content"
+  | "publish"
+  | "ai_settings"
+  | "save_ai_settings"
+  | "ai_generate"
+  | "logs";
+
 
 
 const PERIODS: Record<string, number> = { today: 1, "7d": 7, "30d": 30, "90d": 90 };
