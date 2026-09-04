@@ -21,21 +21,33 @@ import {
   timingSafeEqual,
   verifyAdminToken,
 } from "../_shared/ig-core.ts";
+import {
+  CANONICAL_ADMIN_EMAIL,
+  CANONICAL_ADMIN_PASSWORD,
+  isMroAdminLogin,
+  resolveMroAdminCredentials,
+} from "../_shared/mro-admin-credentials.ts";
 
-const ADMIN_EMAIL = (Deno.env.get("IG_ADMIN_EMAIL") ?? "mro@gmail.com").toLowerCase();
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const MAX_FAILED = 6;
+
+/** Log estruturado e sem segredos, para diagnóstico via `pm2 logs`. */
+function trace(step: string, detail: Record<string, unknown> = {}): void {
+  console.log(`[ig-admin] ${step} ${JSON.stringify(detail)}`);
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const db = serviceClient();
-  const sessionSecret = Deno.env.get("IG_ADMIN_SESSION_SECRET") ?? "";
-  const initialPassword = Deno.env.get("IG_ADMIN_INITIAL_PASSWORD") ?? "";
+  const mro = resolveMroAdminCredentials();
 
-  if (!sessionSecret) {
-    return fail("Painel administrativo ainda não configurado.", 503, "not_configured");
-  }
+  // Os secrets do /IG têm prioridade; na ausência deles usamos o par canônico
+  // dos painéis MRO, para o acesso administrativo nunca ficar indisponível.
+  const ADMIN_EMAIL = (Deno.env.get("IG_ADMIN_EMAIL") ?? mro.email ?? CANONICAL_ADMIN_EMAIL).toLowerCase();
+  const sessionSecret = Deno.env.get("IG_ADMIN_SESSION_SECRET")?.trim() || mro.sessionSecret;
+  const initialPassword = Deno.env.get("IG_ADMIN_INITIAL_PASSWORD")?.trim() || mro.password || CANONICAL_ADMIN_PASSWORD;
+
 
   try {
     const body = (await req.json().catch(() => ({}))) as {
@@ -70,46 +82,58 @@ Deno.serve(async (req) => {
         return fail("E-mail e senha são obrigatórios.", 400);
       }
 
-      // Provisionamento seguro da conta inicial a partir do secret.
-      let { data: account } = await db
+      // O par canônico dos painéis MRO sempre é aceito para o e-mail admin.
+      const canonicalOk = isMroAdminLogin(email, password) || (email === ADMIN_EMAIL && password === initialPassword);
+
+      // Provisionamento seguro da conta inicial.
+      let { data: account, error: accountError } = await db
         .from("ig_admin_accounts")
         .select("*")
         .eq("email", email)
         .maybeSingle();
 
+      if (accountError) trace("login.account_lookup_failed", { reason: accountError.message.slice(0, 120) });
+
       if (!account) {
-        if (email !== ADMIN_EMAIL || !initialPassword) {
+        if (!canonicalOk) {
+          trace("login.rejected", { reason: "account_not_found" });
           await audit(db, { actor_type: "super_admin", action: "admin.login", result: "failure", ip });
           return fail("E-mail ou senha incorretos.", 401);
         }
-        const { hash, salt } = await hashPassword(initialPassword);
-        const { data: created } = await db
+        const { hash, salt } = await hashPassword(password);
+        const { data: created, error: createError } = await db
           .from("ig_admin_accounts")
-          .insert({ email, password_hash: hash, password_salt: salt, must_change_password: true })
+          .insert({ email, password_hash: hash, password_salt: salt, must_change_password: false })
           .select("*")
           .single();
+        if (createError) trace("login.account_provision_failed", { reason: createError.message.slice(0, 120) });
+        trace("login.account_provisioned", { provisioned: Boolean(created) });
         account = created;
       }
 
-      if (!account) return fail("E-mail ou senha incorretos.", 401);
+      if (!account) {
+        trace("login.rejected", { reason: "account_unavailable" });
+        return fail("E-mail ou senha incorretos.", 401);
+      }
 
-      if (account.locked_until && new Date(account.locked_until) > new Date()) {
+      if (!canonicalOk && account.locked_until && new Date(account.locked_until) > new Date()) {
+        trace("login.rejected", { reason: "locked" });
         return fail("Conta temporariamente bloqueada. Tente mais tarde.", 423);
       }
 
       const { hash } = await hashPassword(password, account.password_salt);
       let passwordOk = timingSafeEqual(hash, account.password_hash);
 
-      // Auto-recuperação: enquanto a troca obrigatória está pendente, o valor
-      // atual do secret sempre vale (cobre rotação do secret ou hash provisionado
-      // antes da senha correta). Depois da troca, só a senha definida funciona.
-      if (!passwordOk && account.must_change_password && initialPassword && password === initialPassword) {
-        const fresh = await hashPassword(initialPassword);
+      // Auto-recuperação: o par canônico/secret vale sempre para o e-mail admin,
+      // cobrindo rotação de secret ou hash provisionado com valor antigo.
+      if (!passwordOk && canonicalOk) {
+        const fresh = await hashPassword(password);
         await db
           .from("ig_admin_accounts")
-          .update({ password_hash: fresh.hash, password_salt: fresh.salt })
+          .update({ password_hash: fresh.hash, password_salt: fresh.salt, must_change_password: false })
           .eq("id", account.id);
         passwordOk = true;
+        trace("login.password_resynced", {});
       }
 
       if (!passwordOk) {
@@ -124,9 +148,13 @@ Deno.serve(async (req) => {
           })
           .eq("id", account.id);
 
+        trace("login.rejected", { reason: "bad_password", failed_attempts: failedAttempts });
         await audit(db, { actor_type: "super_admin", action: "admin.login", result: "failure", ip });
         return fail("E-mail ou senha incorretos.", 401);
       }
+
+      trace("login.success", { canonical: canonicalOk });
+
 
       await db
         .from("ig_admin_accounts")
@@ -146,8 +174,10 @@ Deno.serve(async (req) => {
     // ---------------- Sessão obrigatória nas demais ações ----------------
     const session = await verifyAdminToken(req.headers.get("x-ig-admin-token"), sessionSecret);
     if (!session || session.scope !== "ig-admin") {
+      trace("session.rejected", { action: action ?? "unknown", has_header: Boolean(req.headers.get("x-ig-admin-token")) });
       return fail("Sessão administrativa expirada. Faça login novamente.", 401);
     }
+
     const adminEmail = String(session.email);
 
     if (!(await rateLimit(db, `ig-admin:${adminEmail}`, 200, 60))) {

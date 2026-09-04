@@ -80,6 +80,57 @@ export interface IgMessage {
   sent_at: string;
 }
 
+/** Comentário recebido em um post ou Reel. */
+export interface IgComment {
+  id: string;
+  comment_id: string;
+  media_id: string | null;
+  from_username: string | null;
+  text: string | null;
+  replied: boolean;
+  hidden: boolean;
+  commented_at: string | null;
+}
+
+export interface IgMedia {
+  id: string;
+  media_id: string;
+  media_type: string | null;
+  caption: string | null;
+  media_url: string | null;
+  thumbnail_url: string | null;
+  permalink: string | null;
+  like_count: number | null;
+  comments_count: number | null;
+  published_at: string | null;
+}
+
+export type IgMediaType = "IMAGE" | "REELS" | "STORIES";
+
+export interface IgPublication {
+  id: string;
+  status: "draft" | "publishing" | "published" | "failed";
+  media_type: IgMediaType;
+  caption: string | null;
+  media_url: string | null;
+  permalink: string | null;
+  last_error: string | null;
+  published_at: string | null;
+  created_at: string;
+}
+
+export interface IgAiSettings {
+  tenant_id: string;
+  enabled: boolean;
+  auto_reply_dm: boolean;
+  auto_reply_comments: boolean;
+  tone: string;
+  business_context: string | null;
+  faq: string | null;
+  signature: string | null;
+  model: string;
+}
+
 /** Erro de negócio já traduzido para o usuário final. */
 export class IgApiError extends Error {
   readonly code?: string;
@@ -147,6 +198,56 @@ export const igApi = {
       synced_messages: number;
       sync_error: string | null;
     }>("ig-api", { action: "subscribe_webhook", tenant_id: tenantId }),
+
+  comments: (tenantId: string) =>
+    invoke<{ comments: IgComment[] }>("ig-api", { action: "comments", tenant_id: tenantId }),
+
+  syncComments: (tenantId: string) =>
+    invoke<{ media: number; comments: number }>("ig-api", { action: "sync_comments", tenant_id: tenantId }),
+
+  replyComment: (tenantId: string, commentId: string, text: string) =>
+    invoke<{ success: true }>("ig-api", {
+      action: "reply_comment",
+      tenant_id: tenantId,
+      comment_id: commentId,
+      text,
+    }),
+
+  hideComment: (tenantId: string, commentId: string, hidden: boolean) =>
+    invoke<{ hidden: boolean }>("ig-api", {
+      action: "hide_comment",
+      tenant_id: tenantId,
+      comment_id: commentId,
+      hidden,
+    }),
+
+  content: (tenantId: string) =>
+    invoke<{ media: IgMedia[]; publications: IgPublication[] }>("ig-api", {
+      action: "content",
+      tenant_id: tenantId,
+    }),
+
+  publish: (tenantId: string, input: { caption: string; media_url: string; media_type: IgMediaType }) =>
+    invoke<{ media_id: string | null }>("ig-api", { action: "publish", tenant_id: tenantId, ...input }),
+
+  aiSettings: (tenantId: string) =>
+    invoke<{ settings: IgAiSettings; ai_available: boolean }>("ig-api", {
+      action: "ai_settings",
+      tenant_id: tenantId,
+    }),
+
+  saveAiSettings: (tenantId: string, settings: Partial<IgAiSettings>) =>
+    invoke<{ success: true }>("ig-api", { action: "save_ai_settings", tenant_id: tenantId, settings }),
+
+  aiGenerate: (tenantId: string, prompt: string) =>
+    invoke<{ reply: string }>("ig-api", { action: "ai_generate", tenant_id: tenantId, prompt }),
+
+  logs: (tenantId: string) =>
+    invoke<{
+      logs: Array<{ id: string; action: string; actor_type: string; result: string; created_at: string }>;
+      jobs: Array<{ id: string; type: string; status: string; attempts: number; last_error: string | null; created_at: string }>;
+      events: Array<{ id: string; field: string; status: string; error: string | null; received_at: string }>;
+    }>("ig-api", { action: "logs", tenant_id: tenantId }),
 
   oauthConfig: () => invoke<{ app_id: string; scopes: string }>("ig-oauth", { action: "get-config" }),
 

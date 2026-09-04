@@ -29,7 +29,18 @@ type Action =
   | "conversations"
   | "messages"
   | "send_message"
-  | "subscribe_webhook";
+  | "subscribe_webhook"
+  | "comments"
+  | "sync_comments"
+  | "reply_comment"
+  | "hide_comment"
+  | "content"
+  | "publish"
+  | "ai_settings"
+  | "save_ai_settings"
+  | "ai_generate"
+  | "logs";
+
 
 
 const PERIODS: Record<string, number> = { today: 1, "7d": 7, "30d": 30, "90d": 90 };
@@ -186,6 +197,15 @@ Deno.serve(async (req) => {
       company?: string;
       conversation_id?: string;
       text?: string;
+      comment_id?: string;
+      media_id?: string;
+      caption?: string;
+      media_url?: string;
+      media_type?: string;
+      settings?: Record<string, unknown>;
+      prompt?: string;
+      hidden?: boolean;
+
     };
 
 
@@ -520,7 +540,427 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ================= COMENTÁRIOS / CONTEÚDO / IA =================
+    // Helper local: conta conectada + token válido do tenant.
+    const loadAccount = async () => {
+      const { data: account } = await db
+        .from("ig_accounts")
+        .select("id, instagram_account_id, instagram_user_id, username")
+        .eq("tenant_id", tenantId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (!account) return { account: null, token: null };
+      const { data: token } = await db
+        .from("ig_tokens")
+        .select("access_token")
+        .eq("ig_account_id", account.id)
+        .maybeSingle();
+      return { account, token: (token?.access_token as string | undefined) ?? null };
+    };
+
+    const graph = async (path: string, init?: RequestInit) => {
+      const res = await fetch(`https://graph.instagram.com/v21.0/${path}`, init);
+      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
+        error?: { message?: string; error_user_msg?: string };
+      };
+      if (!res.ok || payload.error) {
+        const detail = payload.error?.error_user_msg ?? payload.error?.message ?? `HTTP ${res.status}`;
+        console.error(`[ig-api] graph ${path.split("?")[0]} failed: ${String(detail).slice(0, 240)}`);
+        throw new Error(String(detail));
+      }
+      return payload;
+    };
+
+    // ---------------- LISTA DE COMENTÁRIOS ----------------
+    if (action === "comments") {
+      const { data } = await db
+        .from("ig_comments")
+        .select("id, comment_id, media_id, from_username, text, replied, hidden, commented_at")
+        .eq("tenant_id", tenantId)
+        .eq("is_own", false)
+        .order("commented_at", { ascending: false, nullsFirst: false })
+        .limit(200);
+      return json({ success: true, comments: data ?? [] });
+    }
+
+    // ---------------- SINCRONIZAR COMENTÁRIOS DAS ÚLTIMAS MÍDIAS ----------------
+    if (action === "sync_comments") {
+      const { account, token } = await loadAccount();
+      if (!account || !token) {
+        return fail("Conecte uma conta do Instagram em Configurações.", 400, "needs_connection");
+      }
+
+      const media = (await graph(
+        `me/media?fields=id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,like_count,comments_count,timestamp&limit=25&access_token=${token}`,
+      )) as { data?: Array<Record<string, unknown>> };
+
+      let savedMedia = 0;
+      let savedComments = 0;
+      const ownIds = new Set(
+        [account.instagram_account_id, account.instagram_user_id].filter((v): v is string => Boolean(v)),
+      );
+
+      for (const item of media.data ?? []) {
+        const mediaId = String(item.id ?? "");
+        if (!mediaId) continue;
+        await db.from("ig_media").upsert(
+          {
+            tenant_id: tenantId,
+            ig_account_id: account.id,
+            media_id: mediaId,
+            media_type: (item.media_type as string) ?? null,
+            media_product_type: (item.media_product_type as string) ?? null,
+            caption: (item.caption as string) ?? null,
+            media_url: (item.media_url as string) ?? null,
+            thumbnail_url: (item.thumbnail_url as string) ?? null,
+            permalink: (item.permalink as string) ?? null,
+            like_count: (item.like_count as number) ?? null,
+            comments_count: (item.comments_count as number) ?? null,
+            published_at: (item.timestamp as string) ?? null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "media_id" },
+        );
+        savedMedia++;
+
+        try {
+          const comments = (await graph(
+            `${mediaId}/comments?fields=id,text,username,timestamp,from,parent_id&limit=50&access_token=${token}`,
+          )) as { data?: Array<Record<string, unknown>> };
+
+          for (const comment of comments.data ?? []) {
+            const commentId = String(comment.id ?? "");
+            if (!commentId) continue;
+            const fromId = (comment.from as { id?: string } | undefined)?.id ?? null;
+            const username =
+              (comment.username as string | undefined) ??
+              (comment.from as { username?: string } | undefined)?.username ??
+              null;
+            await db.from("ig_comments").upsert(
+              {
+                tenant_id: tenantId,
+                ig_account_id: account.id,
+                comment_id: commentId,
+                media_id: mediaId,
+                parent_comment_id: (comment.parent_id as string) ?? null,
+                from_id: fromId,
+                from_username: username,
+                text: (comment.text as string) ?? null,
+                is_own: Boolean(fromId && ownIds.has(String(fromId))),
+                commented_at: (comment.timestamp as string) ?? null,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "comment_id" },
+            );
+            savedComments++;
+          }
+        } catch (error) {
+          console.error(`[ig-api] comments sync media ${mediaId}:`, (error as Error).message);
+        }
+      }
+
+      await audit(db, { tenant_id: tenantId, actor_user_id: user.id, action: "comments.synced" });
+      return json({ success: true, media: savedMedia, comments: savedComments });
+    }
+
+    // ---------------- RESPONDER COMENTÁRIO ----------------
+    if (action === "reply_comment") {
+      const text = (body.text ?? "").trim();
+      if (!body.comment_id) return fail("Comentário não informado.", 400);
+      if (!text) return fail("Escreva a resposta antes de enviar.", 400);
+      if (text.length > 2200) return fail("A resposta excede o limite do Instagram.", 400);
+
+      const { token } = await loadAccount();
+      if (!token) return fail("Conta do Instagram sem autorização válida. Reconecte em Configurações.", 400, "needs_reconnect");
+
+      try {
+        await graph(`${body.comment_id}/replies`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ message: text, access_token: token }),
+        });
+      } catch (error) {
+        return fail((error as Error).message, 400, "meta_error");
+      }
+
+      await db
+        .from("ig_comments")
+        .update({ replied: true, updated_at: new Date().toISOString() })
+        .eq("tenant_id", tenantId)
+        .eq("comment_id", body.comment_id);
+
+      await audit(db, { tenant_id: tenantId, actor_user_id: user.id, action: "comment.replied" });
+      return json({ success: true });
+    }
+
+    // ---------------- OCULTAR / MOSTRAR COMENTÁRIO ----------------
+    if (action === "hide_comment") {
+      if (!body.comment_id) return fail("Comentário não informado.", 400);
+      const hide = body.hidden !== false;
+      const { token } = await loadAccount();
+      if (!token) return fail("Conta do Instagram sem autorização válida.", 400, "needs_reconnect");
+
+      try {
+        await graph(`${body.comment_id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ hide: String(hide), access_token: token }),
+        });
+      } catch (error) {
+        return fail((error as Error).message, 400, "meta_error");
+      }
+
+      await db
+        .from("ig_comments")
+        .update({ hidden: hide, updated_at: new Date().toISOString() })
+        .eq("tenant_id", tenantId)
+        .eq("comment_id", body.comment_id);
+
+      return json({ success: true, hidden: hide });
+    }
+
+    // ---------------- CONTEÚDO: MÍDIAS E PUBLICAÇÕES ----------------
+    if (action === "content") {
+      const [{ data: media }, { data: publications }] = await Promise.all([
+        db
+          .from("ig_media")
+          .select("id, media_id, media_type, caption, media_url, thumbnail_url, permalink, like_count, comments_count, published_at")
+          .eq("tenant_id", tenantId)
+          .order("published_at", { ascending: false, nullsFirst: false })
+          .limit(60),
+        db
+          .from("ig_publications")
+          .select("id, status, media_type, caption, media_url, permalink, last_error, published_at, created_at")
+          .eq("tenant_id", tenantId)
+          .order("created_at", { ascending: false })
+          .limit(40),
+      ]);
+      return json({ success: true, media: media ?? [], publications: publications ?? [] });
+    }
+
+    // ---------------- PUBLICAR NO INSTAGRAM ----------------
+    if (action === "publish") {
+      const caption = (body.caption ?? "").trim();
+      const mediaUrl = (body.media_url ?? "").trim();
+      const mediaType = body.media_type === "REELS" || body.media_type === "STORIES" ? body.media_type : "IMAGE";
+
+      if (!/^https:\/\/.+/i.test(mediaUrl)) return fail("Informe o link https público da imagem ou vídeo.", 400);
+      if (caption.length > 2200) return fail("A legenda excede 2200 caracteres.", 400);
+
+      const { account, token } = await loadAccount();
+      if (!account || !token) return fail("Conecte uma conta do Instagram em Configurações.", 400, "needs_connection");
+
+      const { data: publication } = await db
+        .from("ig_publications")
+        .insert({
+          tenant_id: tenantId,
+          ig_account_id: account.id,
+          status: "publishing",
+          media_type: mediaType,
+          caption: caption || null,
+          media_url: mediaUrl,
+          created_by: user.id,
+        })
+        .select("id")
+        .single();
+
+      try {
+        const containerParams = new URLSearchParams({ caption, access_token: token });
+        if (mediaType === "IMAGE") containerParams.set("image_url", mediaUrl);
+        else {
+          containerParams.set("video_url", mediaUrl);
+          containerParams.set("media_type", mediaType);
+        }
+
+        const container = (await graph("me/media", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: containerParams,
+        })) as { id?: string };
+
+        if (!container.id) throw new Error("O Instagram não devolveu o identificador da publicação.");
+
+        const published = (await graph("me/media_publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ creation_id: container.id, access_token: token }),
+        })) as { id?: string };
+
+        await db
+          .from("ig_publications")
+          .update({
+            status: "published",
+            container_id: container.id,
+            published_media_id: published.id ?? null,
+            published_at: new Date().toISOString(),
+            last_error: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", publication?.id ?? "");
+
+        await audit(db, { tenant_id: tenantId, actor_user_id: user.id, action: "content.published" });
+        return json({ success: true, media_id: published.id ?? null });
+      } catch (error) {
+        const message = (error as Error).message.slice(0, 400);
+        await db
+          .from("ig_publications")
+          .update({ status: "failed", last_error: message, updated_at: new Date().toISOString() })
+          .eq("id", publication?.id ?? "");
+        console.error("[ig-api] publish failed:", message);
+        return fail(message, 400, "meta_error");
+      }
+    }
+
+    // ---------------- AGENTE DE IA: CONFIGURAÇÃO ----------------
+    if (action === "ai_settings") {
+      const { data } = await db.from("ig_ai_settings").select("*").eq("tenant_id", tenantId).maybeSingle();
+      return json({
+        success: true,
+        settings:
+          data ?? {
+            tenant_id: tenantId,
+            enabled: false,
+            auto_reply_dm: false,
+            auto_reply_comments: false,
+            tone: "profissional e acolhedor",
+            business_context: null,
+            faq: null,
+            signature: null,
+            model: "google/gemini-2.5-flash",
+          },
+        ai_available: Boolean(Deno.env.get("LOVABLE_API_KEY")),
+      });
+    }
+
+    if (action === "save_ai_settings") {
+      const input = (body.settings ?? {}) as Record<string, unknown>;
+      const limited = (value: unknown, max: number) =>
+        typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
+
+      const { error } = await db.from("ig_ai_settings").upsert(
+        {
+          tenant_id: tenantId,
+          enabled: Boolean(input.enabled),
+          auto_reply_dm: Boolean(input.auto_reply_dm),
+          auto_reply_comments: Boolean(input.auto_reply_comments),
+          tone: limited(input.tone, 120) ?? "profissional e acolhedor",
+          business_context: limited(input.business_context, 4000),
+          faq: limited(input.faq, 8000),
+          signature: limited(input.signature, 200),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "tenant_id" },
+      );
+
+      if (error) {
+        console.error("[ig-api] save_ai_settings failed:", error.message);
+        return fail("Não foi possível salvar a configuração do agente.", 500);
+      }
+      await audit(db, { tenant_id: tenantId, actor_user_id: user.id, action: "ai.settings_saved" });
+      return json({ success: true });
+    }
+
+    // ---------------- AGENTE DE IA: GERAR RESPOSTA ----------------
+    if (action === "ai_generate") {
+      const prompt = (body.prompt ?? "").trim();
+      if (!prompt) return fail("Escreva a mensagem ou o comentário para o agente responder.", 400);
+      if (prompt.length > 4000) return fail("Texto muito longo para o agente.", 400);
+
+      const apiKey = Deno.env.get("LOVABLE_API_KEY");
+      if (!apiKey) return fail("Agente de IA ainda não habilitado neste ambiente.", 503, "ai_unavailable");
+
+      const { data: settings } = await db.from("ig_ai_settings").select("*").eq("tenant_id", tenantId).maybeSingle();
+
+      const system = [
+        "Você é o atendente virtual de um perfil profissional do Instagram.",
+        `Tom de voz: ${settings?.tone ?? "profissional e acolhedor"}.`,
+        settings?.business_context ? `Contexto do negócio: ${settings.business_context}` : null,
+        settings?.faq ? `Perguntas frequentes e respostas oficiais: ${settings.faq}` : null,
+        "Responda em português do Brasil, no máximo 700 caracteres, sem inventar preços, prazos ou dados que não estejam no contexto.",
+        settings?.signature ? `Finalize com: ${settings.signature}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: settings?.model ?? "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+
+      if (res.status === 429) return fail("Limite de uso da IA atingido. Tente novamente em instantes.", 429, "rate_limited");
+      if (res.status === 402) return fail("Créditos de IA esgotados no workspace.", 402, "no_credits");
+
+      const payload = (await res.json().catch(() => ({}))) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        error?: { message?: string };
+      };
+
+      if (!res.ok) {
+        console.error("[ig-api] ai_generate failed:", (payload.error?.message ?? `HTTP ${res.status}`).slice(0, 200));
+        return fail("O agente de IA não conseguiu responder agora.", 502, "ai_error");
+      }
+
+      const reply = payload.choices?.[0]?.message?.content?.trim() ?? "";
+      if (!reply) return fail("O agente de IA não retornou texto.", 502, "ai_empty");
+
+      const period = new Date(new Date().setUTCDate(1)).toISOString().slice(0, 10);
+      const { data: usageRow } = await db
+        .from("ig_usage")
+        .select("id, value")
+        .eq("tenant_id", tenantId)
+        .eq("metric", "ai_calls")
+        .eq("period_start", period)
+        .maybeSingle();
+
+      if (usageRow) {
+        await db
+          .from("ig_usage")
+          .update({ value: Number(usageRow.value) + 1, updated_at: new Date().toISOString() })
+          .eq("id", usageRow.id);
+      } else {
+        await db.from("ig_usage").insert({ tenant_id: tenantId, metric: "ai_calls", period_start: period, value: 1 });
+      }
+
+
+      return json({ success: true, reply });
+    }
+
+    // ---------------- LOGS/DIAGNÓSTICO DO WORKSPACE ----------------
+    if (action === "logs") {
+      const [{ data: logs }, { data: jobs }, { data: events }] = await Promise.all([
+        db
+          .from("ig_audit_logs")
+          .select("id, action, actor_type, result, created_at")
+          .eq("tenant_id", tenantId)
+          .order("created_at", { ascending: false })
+          .limit(50),
+        db
+          .from("ig_jobs")
+          .select("id, type, status, attempts, last_error, created_at")
+          .eq("tenant_id", tenantId)
+          .order("created_at", { ascending: false })
+          .limit(30),
+        db
+          .from("ig_webhook_events")
+          .select("id, field, status, error, received_at")
+          .eq("tenant_id", tenantId)
+          .order("received_at", { ascending: false })
+          .limit(30),
+      ]);
+      return json({ success: true, logs: logs ?? [], jobs: jobs ?? [], events: events ?? [] });
+    }
+
     return fail("Ação não reconhecida.", 400);
+
 
   } catch (error) {
     console.error("[ig-api] unexpected error:", (error as Error).message);
