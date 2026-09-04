@@ -179,7 +179,17 @@ function totalSlots(user: MroUserRow): number {
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // Preflight: responde 204 com todos os headers CORS, refletindo os headers pedidos.
+  if (req.method === "OPTIONS") {
+    const requested = req.headers.get("access-control-request-headers");
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...corsHeaders,
+        ...(requested ? { "Access-Control-Allow-Headers": requested } : {}),
+      },
+    });
+  }
 
   let supabase: ReturnType<typeof createTimedClient>;
   try {
