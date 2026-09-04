@@ -133,7 +133,7 @@ check_cors() {
 
   if [[ "$method" == "OPTIONS" ]]; then
     status="$(curl -sS --max-time 75 -D "$headers" -o "$body" -w '%{http_code}' -X OPTIONS \
-      -H "Origin: $SITE_ORIGIN" \
+      -H "Origin: $request_origin" \
       -H 'Access-Control-Request-Method: POST' \
       -H "Access-Control-Request-Headers: $request_headers" \
       "$url" || true)"
