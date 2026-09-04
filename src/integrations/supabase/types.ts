@@ -2851,6 +2851,45 @@ export type Database = {
         }
         Relationships: []
       }
+      ig_ai_settings: {
+        Row: {
+          auto_reply_comments: boolean
+          auto_reply_dm: boolean
+          business_context: string | null
+          enabled: boolean
+          faq: string | null
+          model: string
+          signature: string | null
+          tenant_id: string
+          tone: string
+          updated_at: string
+        }
+        Insert: {
+          auto_reply_comments?: boolean
+          auto_reply_dm?: boolean
+          business_context?: string | null
+          enabled?: boolean
+          faq?: string | null
+          model?: string
+          signature?: string | null
+          tenant_id: string
+          tone?: string
+          updated_at?: string
+        }
+        Update: {
+          auto_reply_comments?: boolean
+          auto_reply_dm?: boolean
+          business_context?: string | null
+          enabled?: boolean
+          faq?: string | null
+          model?: string
+          signature?: string | null
+          tenant_id?: string
+          tone?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       ig_app_config: {
         Row: {
           app_id: string | null
@@ -2933,6 +2972,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      ig_comments: {
+        Row: {
+          comment_id: string
+          commented_at: string | null
+          created_at: string
+          from_id: string | null
+          from_username: string | null
+          hidden: boolean
+          id: string
+          ig_account_id: string
+          is_own: boolean
+          media_id: string | null
+          parent_comment_id: string | null
+          replied: boolean
+          tenant_id: string
+          text: string | null
+          updated_at: string
+        }
+        Insert: {
+          comment_id: string
+          commented_at?: string | null
+          created_at?: string
+          from_id?: string | null
+          from_username?: string | null
+          hidden?: boolean
+          id?: string
+          ig_account_id: string
+          is_own?: boolean
+          media_id?: string | null
+          parent_comment_id?: string | null
+          replied?: boolean
+          tenant_id: string
+          text?: string | null
+          updated_at?: string
+        }
+        Update: {
+          comment_id?: string
+          commented_at?: string | null
+          created_at?: string
+          from_id?: string | null
+          from_username?: string | null
+          hidden?: boolean
+          id?: string
+          ig_account_id?: string
+          is_own?: boolean
+          media_id?: string | null
+          parent_comment_id?: string | null
+          replied?: boolean
+          tenant_id?: string
+          text?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       ig_conversations: {
         Row: {
@@ -3049,6 +3142,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      ig_media: {
+        Row: {
+          caption: string | null
+          comments_count: number | null
+          created_at: string
+          id: string
+          ig_account_id: string
+          like_count: number | null
+          media_id: string
+          media_product_type: string | null
+          media_type: string | null
+          media_url: string | null
+          permalink: string | null
+          published_at: string | null
+          tenant_id: string
+          thumbnail_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          caption?: string | null
+          comments_count?: number | null
+          created_at?: string
+          id?: string
+          ig_account_id: string
+          like_count?: number | null
+          media_id: string
+          media_product_type?: string | null
+          media_type?: string | null
+          media_url?: string | null
+          permalink?: string | null
+          published_at?: string | null
+          tenant_id: string
+          thumbnail_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          caption?: string | null
+          comments_count?: number | null
+          created_at?: string
+          id?: string
+          ig_account_id?: string
+          like_count?: number | null
+          media_id?: string
+          media_product_type?: string | null
+          media_type?: string | null
+          media_url?: string | null
+          permalink?: string | null
+          published_at?: string | null
+          tenant_id?: string
+          thumbnail_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       ig_messages: {
         Row: {
@@ -3280,6 +3427,60 @@ export type Database = {
           last_login_at?: string | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      ig_publications: {
+        Row: {
+          caption: string | null
+          container_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          ig_account_id: string
+          last_error: string | null
+          media_type: string
+          media_url: string | null
+          permalink: string | null
+          published_at: string | null
+          published_media_id: string | null
+          status: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          caption?: string | null
+          container_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          ig_account_id: string
+          last_error?: string | null
+          media_type?: string
+          media_url?: string | null
+          permalink?: string | null
+          published_at?: string | null
+          published_media_id?: string | null
+          status?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          caption?: string | null
+          container_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          ig_account_id?: string
+          last_error?: string | null
+          media_type?: string
+          media_url?: string | null
+          permalink?: string | null
+          published_at?: string | null
+          published_media_id?: string | null
+          status?: string
+          tenant_id?: string
+          updated_at?: string
         }
         Relationships: []
       }
