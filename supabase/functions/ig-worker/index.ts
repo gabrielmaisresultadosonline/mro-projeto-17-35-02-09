@@ -169,6 +169,58 @@ async function persistDirect(
 }
 
 /**
+ * Grava um comentário recebido pelo webhook em ig_comments, para a tela
+ * de Comentários mostrar dados reais em tempo real.
+ */
+async function persistComment(
+  db: SupabaseClient,
+  tenantId: string,
+  accountRowId: string,
+  value: Record<string, unknown>,
+): Promise<boolean> {
+  const commentId = value.id ? String(value.id) : null;
+  if (!commentId) return false;
+
+  const from = value.from as { id?: string; username?: string } | undefined;
+  const media = value.media as { id?: string } | undefined;
+
+  const { data: account } = await db
+    .from("ig_accounts")
+    .select("instagram_account_id, instagram_user_id")
+    .eq("id", accountRowId)
+    .maybeSingle();
+
+  const ownIds = new Set(
+    [account?.instagram_account_id, account?.instagram_user_id].filter((v): v is string => Boolean(v)),
+  );
+
+  const { error } = await db.from("ig_comments").upsert(
+    {
+      tenant_id: tenantId,
+      ig_account_id: accountRowId,
+      comment_id: commentId,
+      media_id: media?.id ? String(media.id) : null,
+      parent_comment_id: value.parent_id ? String(value.parent_id) : null,
+      from_id: from?.id ? String(from.id) : null,
+      from_username: from?.username ?? null,
+      text: typeof value.text === "string" ? value.text : null,
+      is_own: Boolean(from?.id && ownIds.has(String(from.id))),
+      commented_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "comment_id" },
+  );
+
+  if (error) {
+    console.error("[ig-worker] comment persist failed:", error.message);
+    throw new Error(error.message);
+  }
+  return true;
+}
+
+
+
+/**
  * Processa um job. Eventos de Direct alimentam o Inbox em tempo real;
  * demais campos apenas contabilizam métricas reais.
  */
