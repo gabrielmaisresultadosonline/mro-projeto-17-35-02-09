@@ -66,14 +66,32 @@ import re, sys
 
 text = open(sys.argv[1], encoding="utf-8").read()
 domain, port = sys.argv[2], sys.argv[3]
-servers = re.findall(r"server\s*\{.*?\n\}", text, flags=re.S)
+
+def blocks(source, header):
+    found = []
+    for match in re.finditer(header, source, flags=re.M):
+        opening = source.find("{", match.start())
+        if opening < 0:
+            continue
+        depth = 0
+        for index in range(opening, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    found.append(source[match.start():index + 1])
+                    break
+    return found
+
+servers = blocks(text, r"^\s*server\s*\{")
 server = next((block for block in servers if re.search(r"server_name[^;]*\b" + re.escape(domain) + r"\b", block)), "")
 if not server:
     raise SystemExit("vhost da API não encontrado no nginx -T")
-match = re.search(r"location\s+/functions/v1/?\s*\{([^{}]*)\}", server, flags=re.S)
-if not match:
+locations = blocks(server, r"^\s*location\s+/functions/v1/?\s*\{")
+if not locations:
     raise SystemExit("location /functions/v1/ ausente do vhost")
-block = match.group(1)
+block = locations[0]
 if not re.search(r"proxy_pass\s+http://127\.0\.0\.1:" + re.escape(port) + r"\s*;", block):
     raise SystemExit("/functions/v1/ não aponta para o backend Express em 127.0.0.1:" + port)
 if re.search(r"add_header\s+['\"]?Access-Control-", block, flags=re.I):
