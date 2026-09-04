@@ -13,6 +13,7 @@ BACKEND_PORT="${BACKEND_PORT:-8787}"
 SITE_ORIGIN="${SITE_ORIGIN:-https://maisresultadosonline.com.br}"
 FUNCTION_PATH="/functions/v1/mro-tool-api"
 CANONICAL_REPO_URL="https://github.com/gabrielmaisresultadosonline/mro-projeto-17-35-02-09.git"
+LOG_FILE="${LOG_FILE:-/var/log/mro/mro-tool-cors-check.log}"
 
 log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
@@ -26,6 +27,12 @@ for binary in git curl nginx python3 pm2; do
 done
 
 cd "$PROJECT_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
+touch "$LOG_FILE"
+chmod 600 "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
+printf '\n===== Verificação CORS mro-tool-api: %s =====\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+echo "Log persistente: $LOG_FILE"
 
 log "1/6 Sincronizando o repositório oficial"
 CURRENT_REMOTE="$(git remote get-url origin 2>/dev/null || true)"
@@ -50,6 +57,8 @@ grep -q 'Access-Control-Allow-Methods' "$FUNCTION_FILE" || die "Allow-Methods au
 grep -q 'Access-Control-Allow-Headers' "$FUNCTION_FILE" || die "Allow-Headers ausente da função."
 grep -q 'req.method === "OPTIONS"' "$FUNCTION_FILE" || die "Handler OPTIONS ausente da função."
 grep -q 'headers: { ...corsHeaders' "$FUNCTION_FILE" || die "Helper de respostas com CORS ausente."
+grep -q '\[MRO-TOOL-CORS\] OPTIONS liberado' "$FUNCTION_FILE" || die "Log de preflight ausente da função."
+grep -q '\[MRO-CORS\] OPTIONS liberado' server/src/index.ts || die "Preflight imediato ausente do host Express."
 ok "OPTIONS e respostas JSON da função incluem CORS."
 
 log "3/6 Executando deploy completo preservando dados e credenciais"
@@ -117,19 +126,20 @@ done
 ok "Backend saudável."
 
 check_cors() {
-  local label="$1" url="$2" method="$3" expected_status="$4"
-  local headers body status count origin methods allowed
+  local label="$1" url="$2" method="$3" expected_status="$4" request_origin="$5"
+  local request_headers="authorization,apikey,content-type,x-client-info,x-supabase-client-platform"
+  local headers body status count origin methods allowed missing_header
   headers="$(mktemp)"; body="$(mktemp)"
 
   if [[ "$method" == "OPTIONS" ]]; then
     status="$(curl -sS --max-time 75 -D "$headers" -o "$body" -w '%{http_code}' -X OPTIONS \
-      -H "Origin: $SITE_ORIGIN" \
+      -H "Origin: $request_origin" \
       -H 'Access-Control-Request-Method: POST' \
-      -H 'Access-Control-Request-Headers: apikey,authorization,content-type' \
+      -H "Access-Control-Request-Headers: $request_headers" \
       "$url" || true)"
   else
     status="$(curl -sS --max-time 75 -D "$headers" -o "$body" -w '%{http_code}' -X POST \
-      -H "Origin: $SITE_ORIGIN" \
+      -H "Origin: $request_origin" \
       -H 'Content-Type: application/json' \
       --data '{"action":"verify_user","username":"__cors_healthcheck__"}' \
       "$url" || true)"
@@ -139,7 +149,9 @@ check_cors() {
   origin="$(grep -i '^access-control-allow-origin:' "$headers" | head -1 | tr -d '\r' | cut -d: -f2- | xargs || true)"
   methods="$(grep -i '^access-control-allow-methods:' "$headers" | head -1 | tr -d '\r' || true)"
   allowed="$(grep -i '^access-control-allow-headers:' "$headers" | head -1 | tr -d '\r' || true)"
-  printf '  %-18s HTTP %-3s CORS=%s\n' "$label" "${status:-000}" "${origin:-ausente}"
+  printf '  %-26s HTTP %-3s origin=%-38s CORS=%s\n' "$label" "${status:-000}" "$request_origin" "${origin:-ausente}"
+  echo "    allow-methods: ${methods:-ausente}"
+  echo "    allow-headers: ${allowed:-ausente}"
 
   if [[ "$status" != "$expected_status" || "$count" != "1" || ( "$origin" != "*" && "$origin" != "$SITE_ORIGIN" ) ]]; then
     echo "  allow-methods: ${methods:-ausente}"
@@ -148,19 +160,27 @@ check_cors() {
     rm -f "$headers" "$body"
     return 1
   fi
-  if [[ "$method" == "OPTIONS" ]] && { [[ "$methods" != *"POST"* ]] || [[ "${allowed,,}" != *"authorization"* ]] || [[ "${allowed,,}" != *"apikey"* ]] || [[ "${allowed,,}" != *"content-type"* ]]; }; then
-    rm -f "$headers" "$body"
-    return 1
+  if [[ "$method" == "OPTIONS" ]]; then
+    [[ "$methods" == *"POST"* ]] || { rm -f "$headers" "$body"; return 1; }
+    for missing_header in authorization apikey content-type x-client-info x-supabase-client-platform; do
+      if [[ "${allowed,,}" != *"$missing_header"* ]]; then
+        echo "    FALHA: header solicitado não foi liberado: $missing_header"
+        rm -f "$headers" "$body"
+        return 1
+      fi
+    done
   fi
   rm -f "$headers" "$body"
 }
 
 log "6/6 Testando preflight e POST, local e público"
 FAILED=0
-check_cors "OPTIONS local" "http://127.0.0.1:${BACKEND_PORT}${FUNCTION_PATH}" OPTIONS 204 || FAILED=1
-check_cors "POST local"    "http://127.0.0.1:${BACKEND_PORT}${FUNCTION_PATH}" POST 200 || FAILED=1
-check_cors "OPTIONS público" "https://${API_DOMAIN}${FUNCTION_PATH}" OPTIONS 204 || FAILED=1
-check_cors "POST público"    "https://${API_DOMAIN}${FUNCTION_PATH}" POST 200 || FAILED=1
+for TEST_ORIGIN in "$SITE_ORIGIN" "chrome-extension://mro-ferramenta" "https://www.instagram.com"; do
+  check_cors "OPTIONS local" "http://127.0.0.1:${BACKEND_PORT}${FUNCTION_PATH}" OPTIONS 204 "$TEST_ORIGIN" || FAILED=1
+  check_cors "OPTIONS público" "https://${API_DOMAIN}${FUNCTION_PATH}" OPTIONS 204 "$TEST_ORIGIN" || FAILED=1
+done
+check_cors "POST local" "http://127.0.0.1:${BACKEND_PORT}${FUNCTION_PATH}" POST 200 "chrome-extension://mro-ferramenta" || FAILED=1
+check_cors "POST público" "https://${API_DOMAIN}${FUNCTION_PATH}" POST 200 "chrome-extension://mro-ferramenta" || FAILED=1
 
 if [[ "$FAILED" != "0" ]]; then
   echo
@@ -175,3 +195,5 @@ fi
 ok "CORS da mro-tool-api validado de ponta a ponta."
 echo
 echo "CONCLUÍDO: extensão -> domínio -> Nginx -> Express -> Deno funcionando sem proxy público."
+echo "Para acompanhar preflights reais: pm2 logs mro-api --lines 100 | grep --line-buffered 'MRO-CORS'"
+echo "Relatório desta execução: $LOG_FILE"

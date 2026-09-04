@@ -563,6 +563,41 @@ if [ "$CUTOVER" = true ]; then
   rm -f "$PUBLIC_JSON_HEADERS"
 
 
+  # O login da extensão envia JSON e headers do cliente, portanto sempre faz
+  # preflight. Validamos esse OPTIONS separadamente para não confundir um POST
+  # funcional no curl com CORS realmente liberado no navegador/Instagram.
+  MRO_CORS_HEADERS="$(mktemp)"
+  MRO_CORS_STATUS="$(curl -sS --max-time 15 -X OPTIONS \
+      -H "Origin: chrome-extension://mroferramenta" \
+      -H "Access-Control-Request-Method: POST" \
+      -H "Access-Control-Request-Headers: authorization,apikey,content-type,x-client-info,x-supabase-client-platform" \
+      -D "$MRO_CORS_HEADERS" -o /dev/null -w '%{http_code}' \
+      "${API_URL_FINAL%/}/functions/v1/mro-tool-api" || true)"
+  MRO_CORS_COUNT="$(grep -ci '^access-control-allow-origin:' "$MRO_CORS_HEADERS" || true)"
+  MRO_CORS_ORIGIN="$(grep -i '^access-control-allow-origin:' "$MRO_CORS_HEADERS" | head -1 | tr -d '\r' | cut -d: -f2- | xargs || true)"
+  MRO_CORS_METHODS="$(grep -i '^access-control-allow-methods:' "$MRO_CORS_HEADERS" | head -1 | tr -d '\r' || true)"
+  MRO_CORS_ALLOWED="$(grep -i '^access-control-allow-headers:' "$MRO_CORS_HEADERS" | head -1 | tr -d '\r' || true)"
+  if [ "$MRO_CORS_STATUS" = "204" ] \
+      && [ "$MRO_CORS_COUNT" = "1" ] \
+      && { [ "$MRO_CORS_ORIGIN" = "*" ] || [ "$MRO_CORS_ORIGIN" = "chrome-extension://mroferramenta" ]; } \
+      && [[ "$MRO_CORS_METHODS" == *"POST"* ]] \
+      && [[ "${MRO_CORS_ALLOWED,,}" == *"authorization"* ]] \
+      && [[ "${MRO_CORS_ALLOWED,,}" == *"apikey"* ]] \
+      && [[ "${MRO_CORS_ALLOWED,,}" == *"content-type"* ]] \
+      && [[ "${MRO_CORS_ALLOWED,,}" == *"x-client-info"* ]] \
+      && [[ "${MRO_CORS_ALLOWED,,}" == *"x-supabase-client-platform"* ]]; then
+    ok "Preflight da mro-tool-api liberado para a extensão (HTTP 204, CORS completo)."
+  else
+    echo "  OPTIONS mro-tool-api: HTTP ${MRO_CORS_STATUS:-sem status}; headers CORS: $MRO_CORS_COUNT; origem: ${MRO_CORS_ORIGIN:-ausente}"
+    echo "  ${MRO_CORS_METHODS:-Access-Control-Allow-Methods ausente}"
+    echo "  ${MRO_CORS_ALLOWED:-Access-Control-Allow-Headers ausente}"
+    cat "$MRO_CORS_HEADERS" 2>/dev/null || true
+    rm -f "$MRO_CORS_HEADERS"
+    fail "CORS da mro-tool-api inválido; deploy bloqueado para evitar falha no login da extensão."
+  fi
+  rm -f "$MRO_CORS_HEADERS"
+
+
   # Confere de fato pela porta pública se a API responde com a chave anônima:
   # é isso que o navegador vai fazer em cada página.
   curl -sf --max-time 5 -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
