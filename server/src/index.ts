@@ -40,6 +40,7 @@ app.set("trust proxy", true);
  * antes do middleware padrão. O restante da API segue igual.
  */
 const PUBLIC_READ_PREFIXES = ["/storage/v1/object/public/", "/storage/v1/object/info/public/"];
+const MRO_TOOL_API_PATH = "/functions/v1/mro-tool-api";
 
 function isPublicStorageRead(req: Request): boolean {
   return (
@@ -47,6 +48,44 @@ function isPublicStorageRead(req: Request): boolean {
     (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")
   );
 }
+
+function isMroToolApiRequest(req: Request): boolean {
+  return req.path === MRO_TOOL_API_PATH || req.path === `${MRO_TOOL_API_PATH}/`;
+}
+
+/**
+ * CORS dedicado ao login da extensão.
+ *
+ * O preflight termina no Express, antes de iniciar o processo Deno. Isso evita
+ * que cold start, timeout ou falha da função sejam interpretados pelo navegador
+ * como ausência de CORS. A rota não usa cookies, portanto wildcard é seguro.
+ */
+app.use((req, res, next) => {
+  if (!isMroToolApiRequest(req)) return next();
+
+  const origin = req.header("origin") ?? "sem-origin";
+  const requestedHeaders = req.header("access-control-request-headers");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    requestedHeaders ??
+      "authorization, x-client-info, apikey, content-type, x-requested-with, accept, accept-profile, content-profile, prefer, range, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  );
+  res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader("Vary", "Origin, Access-Control-Request-Headers");
+
+  if (req.method === "OPTIONS") {
+    console.info(
+      `[MRO-CORS] OPTIONS liberado origin=${origin} headers=${requestedHeaders ?? "padrão"}`,
+    );
+    res.status(204).end();
+    return;
+  }
+
+  next();
+});
 
 app.use((req, res, next) => {
   if (!isPublicStorageRead(req)) return next();
@@ -91,7 +130,7 @@ const credentialedCors = cors({
 });
 
 app.use((req, res, next) => {
-  if (isPublicStorageRead(req)) return next();
+  if (isPublicStorageRead(req) || isMroToolApiRequest(req)) return next();
   credentialedCors(req, res, next);
 });
 

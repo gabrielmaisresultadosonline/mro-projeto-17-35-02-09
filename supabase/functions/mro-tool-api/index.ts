@@ -182,6 +182,9 @@ serve(async (req) => {
   // Preflight: responde 204 com todos os headers CORS, refletindo os headers pedidos.
   if (req.method === "OPTIONS") {
     const requested = req.headers.get("access-control-request-headers");
+    console.log(
+      `[MRO-TOOL-CORS] OPTIONS liberado origin=${req.headers.get("origin") ?? "sem-origin"} headers=${requested ?? "padrão"}`,
+    );
     return new Response(null, {
       status: 204,
       headers: {
