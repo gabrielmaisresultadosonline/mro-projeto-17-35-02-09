@@ -204,6 +204,7 @@ Deno.serve(async (req) => {
       media_type?: string;
       settings?: Record<string, unknown>;
       prompt?: string;
+      hidden?: boolean;
 
     };
 
@@ -697,7 +698,7 @@ Deno.serve(async (req) => {
     // ---------------- OCULTAR / MOSTRAR COMENTÁRIO ----------------
     if (action === "hide_comment") {
       if (!body.comment_id) return fail("Comentário não informado.", 400);
-      const hide = body.blocked !== false;
+      const hide = body.hidden !== false;
       const { token } = await loadAccount();
       if (!token) return fail("Conta do Instagram sem autorização válida.", 400, "needs_reconnect");
 
