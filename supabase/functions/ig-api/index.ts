@@ -900,15 +900,24 @@ Deno.serve(async (req) => {
       const reply = payload.choices?.[0]?.message?.content?.trim() ?? "";
       if (!reply) return fail("O agente de IA não retornou texto.", 502, "ai_empty");
 
-      await db.from("ig_usage").upsert(
-        {
-          tenant_id: tenantId,
-          metric: "ai_calls",
-          period_start: new Date(new Date().setUTCDate(1)).toISOString().slice(0, 10),
-          value: 1,
-        },
-        { onConflict: "tenant_id,metric,period_start", ignoreDuplicates: true },
-      );
+      const period = new Date(new Date().setUTCDate(1)).toISOString().slice(0, 10);
+      const { data: usageRow } = await db
+        .from("ig_usage")
+        .select("id, value")
+        .eq("tenant_id", tenantId)
+        .eq("metric", "ai_calls")
+        .eq("period_start", period)
+        .maybeSingle();
+
+      if (usageRow) {
+        await db
+          .from("ig_usage")
+          .update({ value: Number(usageRow.value) + 1, updated_at: new Date().toISOString() })
+          .eq("id", usageRow.id);
+      } else {
+        await db.from("ig_usage").insert({ tenant_id: tenantId, metric: "ai_calls", period_start: period, value: 1 });
+      }
+
 
       return json({ success: true, reply });
     }
