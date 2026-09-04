@@ -195,7 +195,21 @@ async function handleJob(
       if (inbound) await bumpUsage(db, job.tenant_id, "messages_received");
     }
 
-    if (field === "comments") await bumpUsage(db, job.tenant_id, "comments_processed");
+    if (field === "comments" && eventId && accountRowId && job.tenant_id) {
+      const { data: event } = await db
+        .from("ig_webhook_events")
+        .select("payload")
+        .eq("id", eventId)
+        .maybeSingle();
+
+      const saved = event?.payload
+        ? await persistComment(db, job.tenant_id, accountRowId, event.payload as Record<string, unknown>)
+        : false;
+
+      if (saved) await bumpUsage(db, job.tenant_id, "comments_processed");
+      console.log(`[ig-worker] comment event ${eventId} persisted=${saved}`);
+    }
+
 
     if (eventId) {
       await db
